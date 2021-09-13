@@ -1,2 +1,3 @@
-mod types;
-mod version;
+pub mod error;
+pub mod types;
+pub mod version;

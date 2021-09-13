@@ -1,97 +1,86 @@
-use super::version::ProtocolVersion;
+use super::{version::ProtocolVersion, error::{Error, handle_read_err, handle_write_err}};
 use std::{
     convert::{TryFrom, TryInto},
     fmt::{self, Display},
     future::Future,
     str::{from_utf8, FromStr},
 };
-use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[derive(Debug, PartialEq, Error)]
-pub enum Error {
-    #[error("unexpected end of input")]
-    UnexpectedEof,
-    #[error("output buffer too small")]
-    NeedMore,
-    #[error("malformed data")]
-    Malformed,
+pub trait MCDecode<'a, R: AsyncReadExt + Unpin + 'a>: Sized {
+    type Output: Future<Output = Result<Self, Error>> + 'a;
+
+    fn decode(src: &'a mut R, version: ProtocolVersion) -> Self::Output;
 }
 
-pub trait MCType: Sized {
-    type DecodeOutput<'a, R: 'a>: Future<Output = Result<Self, Error>> + 'a;
-    type EncodeOutput<'a, W: 'a>: Future<Output = Result<(), Error>> + 'a;
+pub trait MCEncode<'a, W: AsyncWriteExt + Unpin + 'a> {
+    type Output: Future<Output = Result<(), Error>> + 'a;
 
-    fn decode<R: AsyncReadExt + Unpin>(
-        src: &mut R,
-        version: ProtocolVersion,
-    ) -> Self::DecodeOutput<'_, R>;
-    fn encode<'a, W: AsyncWriteExt + Unpin>(
-        self,
-        tgt: &'a mut W,
-        version: ProtocolVersion,
-    ) -> Self::EncodeOutput<'a, W>;
+    fn encode(self, tgt: &'a mut W, version: ProtocolVersion) -> Self::Output;
 }
 
-macro_rules! decode_impl {
-    ($src:ident, $version:ident, $body:expr) => {
-        type DecodeOutput<'a, R: 'a> = impl Future<Output = Result<Self, Error>> + 'a;
+macro_rules! mcdecode_inner_impl {
+    ($lifetime:lifetime, $reader:ident, $src:ident, $version:ident, $body:expr) => {
+        type Output = impl std::future::Future<Output = Result<Self, $crate::protocol::error::Error>> + $lifetime;
 
-        fn decode<R: AsyncReadExt + Unpin>(
-            $src: &mut R,
-            $version: ProtocolVersion,
-        ) -> Self::DecodeOutput<'_, R> {
+        fn decode($src: &$lifetime mut $reader, $version: $crate::protocol::version::ProtocolVersion) -> Self::Output {
             async move { $body }
         }
     };
-    ($src:ident, $body:expr) => {
-        decode_impl!($src, _version, $body);
+    ($lifetime:lifetime, $reader:ident, $src:ident, $body:expr) => {
+        mcdecode_inner_impl!($lifetime, $reader, $src, _version, $body);
     };
 }
+pub(crate) use mcdecode_inner_impl;
 
-macro_rules! encode_impl {
-    ($self:ident, $tgt:ident, $version:ident, $body:expr) => {
-        type EncodeOutput<'a, W: 'a> = impl Future<Output = Result<(), Error>> + 'a;
-
-        fn encode<W: AsyncWriteExt + Unpin>($self, $tgt: &mut W, $version: ProtocolVersion) -> Self::EncodeOutput<'_, W> {
-            async move {
-                $body
-            }
+macro_rules! mcdecode_impl {
+    ($decode:ty, $src:ident, $version:ident, $body:expr) => {
+        impl<'a, R: AsyncReadExt + Unpin + 'a> MCDecode<'a, R> for $decode {
+            mcdecode_inner_impl!('a, R, $src, $version, $body);
         }
     };
-    ($self:ident, $tgt:ident, $body:expr) => {
-        encode_impl!($self, $tgt, _version, $body);
-    }
+    ($decode:ty, $src:ident, $body:expr) => {
+        mcdecode_impl!($decode, $src, _version, $body);
+    };
 }
+pub(crate) use mcdecode_impl;
 
-fn handle_read_err(err: std::io::Error) -> Error {
-    if err.kind() == std::io::ErrorKind::UnexpectedEof {
-        Error::UnexpectedEof
-    } else {
-        todo!();
-    }
-}
+macro_rules! mcencode_inner_impl {
+    ($lifetime:lifetime, $writer:ident, $self:ident, $tgt:ident, $version:ident, $body:expr) => {
+        type Output = impl std::future::Future<Output = Result<(), $crate::protocol::error::Error>> + $lifetime;
 
-fn handle_write_err(err: std::io::Error) -> Error {
-    if err.kind() == std::io::ErrorKind::WriteZero {
-        Error::NeedMore
-    } else {
-        todo!();
-    }
+        #[allow(unused_mut)]
+        fn encode(mut $self, $tgt: &$lifetime mut $writer, $version: $crate::protocol::version::ProtocolVersion) -> Self::Output {
+            async move { $body }
+        }
+    };
+    ($lifetime:lifetime, $writer:ident, $self:ident, $tgt:ident, $body:expr) => {
+        mcencode_inner_impl!($lifetime, $writer, $self, $tgt, _version, $body);
+    };
 }
+pub(crate) use mcencode_inner_impl;
+
+macro_rules! mcencode_impl {
+    ($encode:ty, $self:ident, $tgt:ident, $version:ident, $body:expr) => {
+        impl<'a, W: AsyncWriteExt + Unpin + 'a> MCEncode<'a, W> for $encode {
+            mcencode_inner_impl!('a, W, $self, $tgt, $version, $body);
+        }
+    };
+    ($encode:ty, $self:ident, $tgt:ident, $body:expr) => {
+        mcencode_impl!($encode, $self, $tgt, _version, $body);
+    };
+}
+pub(crate) use mcencode_impl;
 
 macro_rules! num_impl {
-    ($($ty:ty, $read_fn:tt, $write_fn:tt),* $(,)?) => {
+    ($($type:ty, $read_fn:tt, $write_fn:tt),* $(,)?) => {
         $(
-            impl MCType for $ty {
-                decode_impl!(src, {
-                    src.$read_fn().await.map_err(handle_read_err)
-                });
-
-                encode_impl!(self, tgt, {
-                    tgt.$write_fn(self).await.map_err(handle_write_err)
-                });
-            }
+            mcdecode_impl!($type, src, {
+                src.$read_fn().await.map_err(handle_read_err)
+            });
+            mcencode_impl!($type, self, tgt, {
+                tgt.$write_fn(self).await.map_err(handle_write_err)
+            });
         )*
     }
 }
@@ -107,90 +96,86 @@ num_impl! {
     f64, read_f64, write_f64
 }
 
-impl MCType for bool {
-    decode_impl!(src, version, {
-        match u8::decode(src, version).await {
-            Ok(num) => {
-                if num <= 1 {
-                    Ok(num != 0)
-                } else {
-                    Err(Error::Malformed)
-                }
+mcdecode_impl!(bool, src, version, {
+    match u8::decode(src, version).await {
+        Ok(num) => {
+            if num <= 1 {
+                Ok(num != 0)
+            } else {
+                Err(Error::Malformed)
             }
-            Err(err) => Err(err),
         }
-    });
+        Err(err) => Err(err),
+    }
+});
 
-    encode_impl!(self, tgt, version, {
-        (self as u8).encode(tgt, version).await
-    });
-}
+mcencode_impl!(bool, self, tgt, version, {
+    (self as u8).encode(tgt, version).await
+});
 
 #[derive(Copy, Clone, Debug)]
 pub struct VarInt(pub i32);
 
-impl MCType for VarInt {
-    decode_impl!(src, {
-        let mut bit_offset = 0;
-        let mut result = 0;
-        loop {
-            if bit_offset == 35 {
-                return Err(Error::Malformed);
-            }
-            match src.read_u8().await {
-                Ok(num) => {
-                    let val = (num & 127) as i32;
-                    result |= val << bit_offset;
-                    if num >> 7 == 0 {
-                        return Ok(VarInt(result));
-                    }
-                    bit_offset += 7;
+mcdecode_impl!(VarInt, src, {
+    let mut bit_offset = 0;
+    let mut result = 0;
+    loop {
+        if bit_offset == 35 {
+            return Err(Error::Malformed);
+        }
+        match src.read_u8().await {
+            Ok(num) => {
+                let val = (num & 127) as i32;
+                result |= val << bit_offset;
+                if num >> 7 == 0 {
+                    return Ok(VarInt(result));
                 }
-                Err(err) => return Err(handle_read_err(err)),
+                bit_offset += 7;
             }
+            Err(err) => return Err(handle_read_err(err)),
         }
-    });
+    }
+});
 
-    // TODO: get same performance with better code
-    encode_impl!(self, tgt, {
-        match self.0 {
-            0..=127 => tgt.write_all(&[self.0 as u8]).await,
-            128..=16383 => {
-                tgt.write_all(&[self.0 as u8 | 128, (self.0 >> 7) as u8])
-                    .await
-            }
-            16384..=2097151 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8,
-                ])
+// TODO: get same performance with better code
+mcencode_impl!(VarInt, self, tgt, {
+    match self.0 {
+        0..=127 => tgt.write_all(&[self.0 as u8]).await,
+        128..=16383 => {
+            tgt.write_all(&[self.0 as u8 | 128, (self.0 >> 7) as u8])
                 .await
-            }
-            2097152..=268435455 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8,
-                ])
-                .await
-            }
-            _ => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8 | 128,
-                    // Need unsigned shift for negative values
-                    ((self.0 as u32) >> 28) as u8,
-                ])
-                .await
-            }
         }
-        .map_err(handle_write_err)
-    });
-}
+        16384..=2097151 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8,
+            ])
+            .await
+        }
+        2097152..=268435455 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8,
+            ])
+            .await
+        }
+        _ => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8 | 128,
+                // Need unsigned shift for negative values
+                ((self.0 as u32) >> 28) as u8,
+            ])
+            .await
+        }
+    }
+    .map_err(handle_write_err)
+});
 
 impl From<i32> for VarInt {
     fn from(val: i32) -> Self {
@@ -207,133 +192,131 @@ impl From<VarInt> for i32 {
 #[derive(Copy, Clone, Debug)]
 pub struct VarLong(pub i64);
 
-impl MCType for VarLong {
-    decode_impl!(src, {
-        let mut bit_offset = 0;
-        let mut result = 0;
-        loop {
-            if bit_offset == 70 {
-                return Err(Error::Malformed);
-            }
-            match src.read_u8().await {
-                Ok(num) => {
-                    let val = (num & 127) as i64;
-                    result |= val << bit_offset;
-                    if num >> 7 == 0 {
-                        return Ok(VarLong(result));
-                    }
-                    bit_offset += 7;
+mcdecode_impl!(VarLong, src, {
+    let mut bit_offset = 0;
+    let mut result = 0;
+    loop {
+        if bit_offset == 70 {
+            return Err(Error::Malformed);
+        }
+        match src.read_u8().await {
+            Ok(num) => {
+                let val = (num & 127) as i64;
+                result |= val << bit_offset;
+                if num >> 7 == 0 {
+                    return Ok(VarLong(result));
                 }
-                Err(err) => return Err(handle_read_err(err)),
+                bit_offset += 7;
             }
+            Err(err) => return Err(handle_read_err(err)),
         }
-    });
+    }
+});
 
-    // TODO: get same performance with better code
-    encode_impl!(self, tgt, {
-        match self.0 {
-            0..=127 => tgt.write_all(&[self.0 as u8]).await,
-            128..=16383 => {
-                tgt.write_all(&[self.0 as u8 | 128, (self.0 >> 7) as u8])
-                    .await
-            }
-            16384..=2097151 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8,
-                ])
+// TODO: get same performance with better code
+mcencode_impl!(VarLong, self, tgt, {
+    match self.0 {
+        0..=127 => tgt.write_all(&[self.0 as u8]).await,
+        128..=16383 => {
+            tgt.write_all(&[self.0 as u8 | 128, (self.0 >> 7) as u8])
                 .await
-            }
-            2097152..=268435455 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8,
-                ])
-                .await
-            }
-            268435456..=34359738367 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8 | 128,
-                    (self.0 >> 28) as u8,
-                ])
-                .await
-            }
-            34359738368..=4398046511103 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8 | 128,
-                    (self.0 >> 28) as u8 | 128,
-                    (self.0 >> 35) as u8,
-                ])
-                .await
-            }
-            4398046511104..=562949953421311 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8 | 128,
-                    (self.0 >> 28) as u8 | 128,
-                    (self.0 >> 35) as u8 | 128,
-                    (self.0 >> 42) as u8,
-                ])
-                .await
-            }
-            562949953421312..=72057594037927935 => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8 | 128,
-                    (self.0 >> 28) as u8 | 128,
-                    (self.0 >> 35) as u8 | 128,
-                    (self.0 >> 42) as u8 | 128,
-                    (self.0 >> 49) as u8,
-                ])
-                .await
-            }
-            72057594037927936.. => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8 | 128,
-                    (self.0 >> 28) as u8 | 128,
-                    (self.0 >> 35) as u8 | 128,
-                    (self.0 >> 42) as u8 | 128,
-                    (self.0 >> 49) as u8 | 128,
-                    (self.0 >> 56) as u8,
-                ])
-                .await
-            }
-            _ => {
-                tgt.write_all(&[
-                    self.0 as u8 | 128,
-                    (self.0 >> 7) as u8 | 128,
-                    (self.0 >> 14) as u8 | 128,
-                    (self.0 >> 21) as u8 | 128,
-                    (self.0 >> 28) as u8 | 128,
-                    (self.0 >> 35) as u8 | 128,
-                    (self.0 >> 42) as u8 | 128,
-                    (self.0 >> 49) as u8 | 128,
-                    (self.0 >> 56) as u8 | 128,
-                    // No unsigned cast because always negative here
-                    1, // this byte is useless but needed
-                ])
-                .await
-            }
         }
-        .map_err(handle_write_err)
-    });
-}
+        16384..=2097151 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8,
+            ])
+            .await
+        }
+        2097152..=268435455 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8,
+            ])
+            .await
+        }
+        268435456..=34359738367 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8 | 128,
+                (self.0 >> 28) as u8,
+            ])
+            .await
+        }
+        34359738368..=4398046511103 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8 | 128,
+                (self.0 >> 28) as u8 | 128,
+                (self.0 >> 35) as u8,
+            ])
+            .await
+        }
+        4398046511104..=562949953421311 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8 | 128,
+                (self.0 >> 28) as u8 | 128,
+                (self.0 >> 35) as u8 | 128,
+                (self.0 >> 42) as u8,
+            ])
+            .await
+        }
+        562949953421312..=72057594037927935 => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8 | 128,
+                (self.0 >> 28) as u8 | 128,
+                (self.0 >> 35) as u8 | 128,
+                (self.0 >> 42) as u8 | 128,
+                (self.0 >> 49) as u8,
+            ])
+            .await
+        }
+        72057594037927936.. => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8 | 128,
+                (self.0 >> 28) as u8 | 128,
+                (self.0 >> 35) as u8 | 128,
+                (self.0 >> 42) as u8 | 128,
+                (self.0 >> 49) as u8 | 128,
+                (self.0 >> 56) as u8,
+            ])
+            .await
+        }
+        _ => {
+            tgt.write_all(&[
+                self.0 as u8 | 128,
+                (self.0 >> 7) as u8 | 128,
+                (self.0 >> 14) as u8 | 128,
+                (self.0 >> 21) as u8 | 128,
+                (self.0 >> 28) as u8 | 128,
+                (self.0 >> 35) as u8 | 128,
+                (self.0 >> 42) as u8 | 128,
+                (self.0 >> 49) as u8 | 128,
+                (self.0 >> 56) as u8 | 128,
+                // No unsigned cast because always negative here
+                1, // this byte is useless but needed
+            ])
+            .await
+        }
+    }
+    .map_err(handle_write_err)
+});
 
 impl From<i64> for VarLong {
     fn from(val: i64) -> Self {
@@ -346,11 +329,11 @@ impl From<VarLong> for i64 {
         val.0
     }
 }
-
+#[derive(Clone, Debug)]
 pub struct LengthCappedString<const L: usize>(pub String);
 
-impl<const L: usize> MCType for LengthCappedString<L> {
-    decode_impl!(src, version, {
+impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> MCDecode<'a, R> for LengthCappedString<L> {
+    mcdecode_inner_impl!('a, R, src, version, {
         let str_len = VarInt::decode(src, version).await?.0 as usize;
         if str_len > (L << 2) {
             return Err(Error::Malformed);
@@ -362,10 +345,12 @@ impl<const L: usize> MCType for LengthCappedString<L> {
                 Err(_) => todo!(),
             },
             Err(err) => Err(handle_write_err(err)),
-        }
+        }  
     });
+} 
 
-    encode_impl!(self, tgt, version, {
+impl<'a, W: AsyncWriteExt + Unpin + 'a, const L: usize> MCEncode<'a, W> for LengthCappedString<L> {
+    mcencode_inner_impl!('a, W, self, tgt, version, {
         let str = self.0;
         if str.len() > (L << 2) || str.len() > i32::MAX as usize {
             Err(Error::Malformed)
@@ -421,18 +406,16 @@ pub type Chat = LengthCappedString<262144>;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct UUID(pub u128);
 
-impl MCType for UUID {
-    decode_impl!(src, {
-        match src.read_u128().await {
-            Ok(num) => Ok(UUID(num)),
-            Err(err) => Err(handle_read_err(err)),
-        }
-    });
+mcdecode_impl!(UUID, src, {
+    match src.read_u128().await {
+        Ok(num) => Ok(UUID(num)),
+        Err(err) => Err(handle_read_err(err)),
+    }
+});
 
-    encode_impl!(self, tgt, {
-        tgt.write_u128(self.0).await.map_err(handle_write_err)
-    });
-}
+mcencode_impl!(UUID, self, tgt, {
+    tgt.write_u128(self.0).await.map_err(handle_write_err)
+});
 
 impl FromStr for UUID {
     type Err = Error;
@@ -476,40 +459,39 @@ pub struct Position {
     pub z: i32,
 }
 
-impl MCType for Position {
-    decode_impl!(src, version, {
-        i64::decode(src, version).await.map(|num| {
-            let (x, y, z) = if version >= ProtocolVersion::V1_14_4 {
-                (
-                    (num >> 38) as i32,
-                    (num << 52 >> 52) as i32,
-                    (num << 26 >> 38) as i32,
-                )
-            } else {
-                (
-                    (num >> 38) as i32,
-                    (num << 12 >> 38) as i32,
-                    (num << 38 >> 38) as i32,
-                )
-            };
-            Position { x, y, z }
-        })
-    });
+mcdecode_impl!(Position, src, version, {
+    i64::decode(src, version).await.map(|num| {
+        let (x, y, z) = if version >= ProtocolVersion::V1_14_4 {
+            (
+                (num >> 38) as i32,
+                (num << 52 >> 52) as i32,
+                (num << 26 >> 38) as i32,
+            )
+        } else {
+            (
+                (num >> 38) as i32,
+                (num << 12 >> 38) as i32,
+                (num << 38 >> 38) as i32,
+            )
+        };
+        Position { x, y, z }
+    })
+});
 
-    encode_impl!(self, tgt, {
-        let num = ((self.x as u64 & 67108863) << 38)
-            | ((self.z as u64 & 67108863) << 12)
-            | (self.y as u64 & 4095);
-        tgt.write_u64(num).await.map_err(handle_write_err)
-    });
-}
+mcencode_impl!(Position, self, tgt, {
+    let num = ((self.x as u64 & 67108863) << 38)
+        | ((self.z as u64 & 67108863) << 12)
+        | (self.y as u64 & 4095);
+    tgt.write_u64(num).await.map_err(handle_write_err)
+});
 
 mod tests {
     use std::io::Cursor;
     use tokio::test;
 
     use super::super::version::ProtocolVersion;
-    use super::MCType;
+    use super::MCDecode;
+    use super::MCEncode;
     use super::Position;
     use super::VarInt;
     use super::VarLong;
