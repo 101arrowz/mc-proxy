@@ -8,10 +8,13 @@ use tokio::net::{TcpListener, TcpStream};
 use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
 use trust_dns_resolver::AsyncResolver;
 
-mod protocol;
 mod connection;
+mod protocol;
 
-use protocol::{types::{VarInt, MCDecode, MCEncode}, version::ProtocolVersion};
+use protocol::{
+    types::{MCDecode, MCEncode, VarInt},
+    version::ProtocolVersion,
+};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(mut server) = TcpStream::connect((ip_addr, remote_port)).await {
                 let (mut server_out, mut server_in) = server.split();
                 let err = tokio::join!(async {
-                    let value: i32 = VarInt::decode(&mut client_out, ProtocolVersion::V1_8).await?.into();
+                    let value: i32 = VarInt::decode(&mut client_out, ProtocolVersion::V1_8)
+                        .await?
+                        .into();
                     io::copy(&mut client_out, &mut server_in).await?;
                     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
                 });

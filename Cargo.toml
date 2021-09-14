@@ -11,4 +11,7 @@ tokio-util = "0.6.7"
 trust-dns-resolver = { version = "0.20.3" }
 anyhow = "1.0"
 thiserror = "1.0"
-flate2 = { version = "1.0", features = ["tokio"] }
+async-compression = { version = "0.3", features = ["tokio", "zlib"] }
+cfb8 = "0.7"
+aes = "0.7"
+hex-literal = '*'

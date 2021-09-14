@@ -1,12 +1,15 @@
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt, Take};
-use flate2::read::GzDecoder;
+use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, Take};
 
-use crate::protocol::{types::{MCDecode, MCEncode, VarInt, mcdecode_inner_impl, mcencode_impl, mcencode_inner_impl}, error::{handle_write_err}};
-
+use crate::protocol::{
+    error::handle_write_err,
+    types::{mcdecode_inner_impl, mcencode_impl, mcencode_inner_impl, MCDecode, MCEncode, VarInt},
+};
+use async_compression::tokio::bufread::ZlibDecoder;
 
 pub struct Packet<R: AsyncReadExt + Unpin> {
     pub len: i32,
-    pub content: R
+    pub id: i32,
+    pub content: R,
 }
 
 impl<'a, R: AsyncReadExt + Unpin + 'a> MCDecode<'a, R> for Packet<Take<&'a mut R>> {
@@ -14,12 +17,15 @@ impl<'a, R: AsyncReadExt + Unpin + 'a> MCDecode<'a, R> for Packet<Take<&'a mut R
         let len = VarInt::decode(src, version).await?.into();
         Ok(Packet {
             len,
+            id: VarInt::decode(src, version).await?.into(),
             content: src.take(len as u64)
         })
     });
 }
 
-impl<'a, R: AsyncReadExt + Unpin + 'a, W: AsyncWriteExt + Unpin + 'a> MCEncode<'a, W> for Packet<R> {
+impl<'a, R: AsyncReadExt + Unpin + 'a, W: AsyncWriteExt + Unpin + 'a> MCEncode<'a, W>
+    for Packet<R>
+{
     mcencode_inner_impl!('a, W, self, tgt, version, {
         VarInt(self.len).encode(tgt, version).await?;
         match io::copy(&mut self.content, tgt).await {
@@ -28,4 +34,3 @@ impl<'a, R: AsyncReadExt + Unpin + 'a, W: AsyncWriteExt + Unpin + 'a> MCEncode<'
         }
     });
 }
-

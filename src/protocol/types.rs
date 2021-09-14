@@ -1,4 +1,7 @@
-use super::{version::ProtocolVersion, error::{Error, handle_read_err, handle_write_err}};
+use super::{
+    error::{handle_read_err, handle_write_err, Error},
+    version::ProtocolVersion,
+};
 use std::{
     convert::{TryFrom, TryInto},
     fmt::{self, Display},
@@ -345,9 +348,9 @@ impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> MCDecode<'a, R> for Lengt
                 Err(_) => todo!(),
             },
             Err(err) => Err(handle_write_err(err)),
-        }  
+        }
     });
-} 
+}
 
 impl<'a, W: AsyncWriteExt + Unpin + 'a, const L: usize> MCEncode<'a, W> for LengthCappedString<L> {
     mcencode_inner_impl!('a, W, self, tgt, version, {
@@ -484,6 +487,48 @@ mcencode_impl!(Position, self, tgt, {
         | (self.y as u64 & 4095);
     tgt.write_u64(num).await.map_err(handle_write_err)
 });
+
+macro_rules! generate {
+    (
+        $(
+            $packet:ident {
+                $(
+                    $field:ident : $type:ty
+                ),* $(,)?
+            }
+        )*
+    ) => {
+        $(
+            #[derive(Debug, Clone)]
+            pub struct $packet {
+                $(
+                    pub $field: $type,
+                )*
+            }
+
+            impl<'a, R: tokio::io::AsyncReadExt + Unpin + 'a> $crate::protocol::types::MCDecode<'a, R> for $packet {
+                $crate::protocol::types::mcdecode_inner_impl!('a, R, src, version, {
+                    Ok($packet {
+                        $(
+                            $field: <$type as $crate::protocol::types::MCDecode<'_, R>>::decode(src, version).await?,
+                        )*
+                    })
+                });
+            }
+
+            impl<'a, W: tokio::io::AsyncWriteExt + Unpin + 'a> $crate::protocol::types::MCEncode<'a, W> for $packet {
+                $crate::protocol::types::mcencode_inner_impl!('a, W, self, tgt, version, {
+                    $(
+                        $crate::protocol::types::MCEncode::encode(self.$field, tgt, version).await?;
+                    )*
+                    Ok(())
+                });
+            }
+        )*
+    };
+}
+
+pub(crate) use generate;
 
 mod tests {
     use std::io::Cursor;
