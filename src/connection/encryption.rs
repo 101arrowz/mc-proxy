@@ -1,7 +1,17 @@
 use aes::Aes128;
-use cfb8::{Cfb8, cipher::{NewCipher, AsyncStreamCipher, errors::InvalidLength}};
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
-use std::{pin::Pin, task::{Context, Poll, ready}, cmp::max};
+use cfb8::{
+    cipher::{errors::InvalidLength, AsyncStreamCipher, NewCipher},
+    Cfb8,
+};
+use std::{
+    cmp::max,
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
+use tokio::io::{
+    self, AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
+    ReadBuf,
+};
 
 type MCEncryption = Cfb8<Aes128>;
 
@@ -10,47 +20,59 @@ pub struct MCEncryptor<W: AsyncWrite + Unpin> {
     tgt: W,
     buffer: Box<[u8]>,
     pos: usize,
-    cap: usize
+    cap: usize,
 }
+
+const BUFFER_SIZE: usize = 8192;
 
 impl<W: AsyncWrite + Unpin> MCEncryptor<W> {
     pub fn new(tgt: W) -> MCEncryptor<W> {
         MCEncryptor {
             cipher: None,
             tgt,
-            buffer: vec![0u8; 8192].into_boxed_slice(),
+            buffer: vec![0u8; BUFFER_SIZE].into_boxed_slice(),
             pos: 0,
-            cap: 0
+            cap: 0,
         }
     }
 
-    pub fn set_key(&mut self, key: [u8; 16]) {
-        self.cipher = Some(MCEncryption::new_from_slices(&key, &key).unwrap());
+    pub fn set_key(&mut self, key: [u8; 16]) -> Result<(), InvalidLength> {
+        self.cipher = Some(MCEncryption::new_from_slices(&key, &key)?);
+        Ok(())
     }
 
     fn flush_buffer(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         if self.cipher.is_some() {
             while self.pos != self.cap {
-                self.pos += ready!(Pin::new(&mut self.tgt).poll_write(cx, &self.buffer[self.pos..self.cap]))?;
+                self.pos += ready!(
+                    Pin::new(&mut self.tgt).poll_write(cx, &self.buffer[self.pos..self.cap])
+                )?;
             }
         }
         Poll::Ready(Ok(()))
     }
 }
 
-impl<W: AsyncWrite + Unpin> AsyncWrite for MCEncryptor<W> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize, io::Error>> {
-        if let Some(cipher) = self.cipher {
+impl<W: AsyncWriteExt + Unpin> AsyncWrite for MCEncryptor<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        if self.cipher.is_some() {
             ready!(self.flush_buffer(cx))?;
             self.pos = 0;
-            let cap = max(buf.len(), 8192);
+            let cap = max(buf.len(), BUFFER_SIZE);
             self.cap = cap;
-            // Need intermediate to avoid double borrow...
-            let mut encrypted_buffer = [0; 8192];
+            // extra buffer to avoid double &mut self
+            let mut encrypted_buffer = [0; BUFFER_SIZE];
             encrypted_buffer[..cap].copy_from_slice(&buf[..cap]);
-            cipher.encrypt(&mut encrypted_buffer[..cap]);
+            self.cipher
+                .as_mut()
+                .unwrap()
+                .encrypt(&mut encrypted_buffer[..cap]);
             self.buffer[..cap].copy_from_slice(&encrypted_buffer[..cap]);
-            ready!(self.flush_buffer(cx))?;
+            let _ = self.flush_buffer(cx)?;
             Poll::Ready(Ok(cap))
         } else {
             Pin::new(&mut self.tgt).poll_write(cx, buf)
@@ -61,7 +83,10 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for MCEncryptor<W> {
         self.flush_buffer(cx)
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
         ready!(self.flush_buffer(cx))?;
         Pin::new(&mut self.tgt).poll_shutdown(cx)
     }
@@ -74,22 +99,24 @@ pub struct MCDecryptor<R: AsyncReadExt + Unpin> {
 
 impl<R: AsyncReadExt + Unpin> MCDecryptor<R> {
     pub fn new(src: R) -> MCDecryptor<R> {
-        MCDecryptor {
-            src,
-            cipher: None
-        }
+        MCDecryptor { src, cipher: None }
     }
 
-    pub fn set_key(&mut self, key: [u8; 16]) {
-        self.cipher = Some(MCEncryption::new_from_slices(&key, &key).unwrap());
+    pub fn set_key(&mut self, key: [u8; 16]) -> Result<(), InvalidLength> {
+        self.cipher = Some(MCEncryption::new_from_slices(&key, &key)?);
+        Ok(())
     }
 }
 
 impl<R: AsyncReadExt + Unpin> AsyncRead for MCDecryptor<R> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
         let prev_len = buf.filled().len();
         Pin::new(&mut self.src).poll_read(cx, buf).map_ok(|_| {
-            if let Some(cipher) = self.cipher {
+            if let Some(cipher) = &mut self.cipher {
                 cipher.decrypt(&mut buf.filled_mut()[prev_len..]);
             }
         })
