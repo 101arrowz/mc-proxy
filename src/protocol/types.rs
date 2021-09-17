@@ -1,8 +1,6 @@
-use super::{
-    error::{handle_read_err, handle_write_err, Error},
-    version::ProtocolVersion,
-};
+use super::{error::Error, version::ProtocolVersion};
 use std::{
+    borrow::Cow,
     convert::{TryFrom, TryInto},
     fmt::{self, Display},
     future::Future,
@@ -10,19 +8,27 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub trait MCDecode<'a, R: AsyncReadExt + Unpin + 'a>: Sized {
+fn handle_io_err(err: std::io::Error) -> Error {
+    match err.kind() {
+        std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+        std::io::ErrorKind::WriteZero => Error::NeedMore,
+        _ => todo!(),
+    }
+}
+
+pub trait Decode<'a, R: AsyncReadExt + Unpin + 'a>: Sized {
     type Output: Future<Output = Result<Self, Error>> + 'a;
 
     fn decode(src: &'a mut R, version: ProtocolVersion) -> Self::Output;
 }
 
-pub trait MCEncode<'a, W: AsyncWriteExt + Unpin + 'a> {
+pub trait Encode<'a, W: AsyncWriteExt + Unpin + 'a> {
     type Output: Future<Output = Result<(), Error>> + 'a;
 
     fn encode(self, tgt: &'a mut W, version: ProtocolVersion) -> Self::Output;
 }
 
-macro_rules! mcdecode_inner_impl {
+macro_rules! decode_inner_impl {
     ($lifetime:lifetime, $reader:ident, $src:ident, $version:ident, $body:expr) => {
         type Output = impl std::future::Future<Output = Result<Self, $crate::protocol::error::Error>> + $lifetime;
 
@@ -31,24 +37,24 @@ macro_rules! mcdecode_inner_impl {
         }
     };
     ($lifetime:lifetime, $reader:ident, $src:ident, $body:expr) => {
-        mcdecode_inner_impl!($lifetime, $reader, $src, _version, $body);
+        decode_inner_impl!($lifetime, $reader, $src, _version, $body);
     };
 }
-pub(crate) use mcdecode_inner_impl;
+pub(crate) use decode_inner_impl;
 
-macro_rules! mcdecode_impl {
+macro_rules! decode_impl {
     ($decode:ty, $src:ident, $version:ident, $body:expr) => {
-        impl<'a, R: AsyncReadExt + Unpin + 'a> MCDecode<'a, R> for $decode {
-            mcdecode_inner_impl!('a, R, $src, $version, $body);
+        impl<'a, R: AsyncReadExt + Unpin + 'a> Decode<'a, R> for $decode {
+            decode_inner_impl!('a, R, $src, $version, $body);
         }
     };
     ($decode:ty, $src:ident, $body:expr) => {
-        mcdecode_impl!($decode, $src, _version, $body);
+        decode_impl!($decode, $src, _version, $body);
     };
 }
-pub(crate) use mcdecode_impl;
+pub(crate) use decode_impl;
 
-macro_rules! mcencode_inner_impl {
+macro_rules! encode_inner_impl {
     ($lifetime:lifetime, $writer:ident, $self:ident, $tgt:ident, $version:ident, $body:expr) => {
         type Output = impl std::future::Future<Output = Result<(), $crate::protocol::error::Error>> + $lifetime;
 
@@ -58,31 +64,31 @@ macro_rules! mcencode_inner_impl {
         }
     };
     ($lifetime:lifetime, $writer:ident, $self:ident, $tgt:ident, $body:expr) => {
-        mcencode_inner_impl!($lifetime, $writer, $self, $tgt, _version, $body);
+        encode_inner_impl!($lifetime, $writer, $self, $tgt, _version, $body);
     };
 }
-pub(crate) use mcencode_inner_impl;
+pub(crate) use encode_inner_impl;
 
-macro_rules! mcencode_impl {
+macro_rules! encode_impl {
     ($encode:ty, $self:ident, $tgt:ident, $version:ident, $body:expr) => {
-        impl<'a, W: AsyncWriteExt + Unpin + 'a> MCEncode<'a, W> for $encode {
-            mcencode_inner_impl!('a, W, $self, $tgt, $version, $body);
+        impl<'a, W: AsyncWriteExt + Unpin + 'a> Encode<'a, W> for $encode {
+            encode_inner_impl!('a, W, $self, $tgt, $version, $body);
         }
     };
     ($encode:ty, $self:ident, $tgt:ident, $body:expr) => {
-        mcencode_impl!($encode, $self, $tgt, _version, $body);
+        encode_impl!($encode, $self, $tgt, _version, $body);
     };
 }
-pub(crate) use mcencode_impl;
+pub(crate) use encode_impl;
 
 macro_rules! num_impl {
     ($($type:ty, $read_fn:tt, $write_fn:tt),* $(,)?) => {
         $(
-            mcdecode_impl!($type, src, {
-                src.$read_fn().await.map_err(handle_read_err)
+            decode_impl!($type, src, {
+                src.$read_fn().await.map_err(handle_io_err)
             });
-            mcencode_impl!($type, self, tgt, {
-                tgt.$write_fn(self).await.map_err(handle_write_err)
+            encode_impl!($type, self, tgt, {
+                tgt.$write_fn(self).await.map_err(handle_io_err)
             });
         )*
     }
@@ -99,7 +105,7 @@ num_impl! {
     f64, read_f64, write_f64
 }
 
-mcdecode_impl!(bool, src, version, {
+decode_impl!(bool, src, version, {
     match u8::decode(src, version).await {
         Ok(num) => {
             if num <= 1 {
@@ -112,14 +118,14 @@ mcdecode_impl!(bool, src, version, {
     }
 });
 
-mcencode_impl!(bool, self, tgt, version, {
+encode_impl!(bool, self, tgt, version, {
     (self as u8).encode(tgt, version).await
 });
 
 #[derive(Copy, Clone, Debug)]
 pub struct VarInt(pub i32);
 
-mcdecode_impl!(VarInt, src, {
+decode_impl!(VarInt, src, {
     let mut bit_offset = 0;
     let mut result = 0;
     loop {
@@ -135,13 +141,13 @@ mcdecode_impl!(VarInt, src, {
                 }
                 bit_offset += 7;
             }
-            Err(err) => return Err(handle_read_err(err)),
+            Err(err) => return Err(handle_io_err(err)),
         }
     }
 });
 
 // TODO: get same performance with better code
-mcencode_impl!(VarInt, self, tgt, {
+encode_impl!(VarInt, self, tgt, {
     match self.0 {
         0..=127 => tgt.write_all(&[self.0 as u8]).await,
         128..=16383 => {
@@ -177,7 +183,7 @@ mcencode_impl!(VarInt, self, tgt, {
             .await
         }
     }
-    .map_err(handle_write_err)
+    .map_err(handle_io_err)
 });
 
 impl From<i32> for VarInt {
@@ -195,7 +201,7 @@ impl From<VarInt> for i32 {
 #[derive(Copy, Clone, Debug)]
 pub struct VarLong(pub i64);
 
-mcdecode_impl!(VarLong, src, {
+decode_impl!(VarLong, src, {
     let mut bit_offset = 0;
     let mut result = 0;
     loop {
@@ -211,13 +217,13 @@ mcdecode_impl!(VarLong, src, {
                 }
                 bit_offset += 7;
             }
-            Err(err) => return Err(handle_read_err(err)),
+            Err(err) => return Err(handle_io_err(err)),
         }
     }
 });
 
 // TODO: get same performance with better code
-mcencode_impl!(VarLong, self, tgt, {
+encode_impl!(VarLong, self, tgt, {
     match self.0 {
         0..=127 => tgt.write_all(&[self.0 as u8]).await,
         128..=16383 => {
@@ -318,7 +324,7 @@ mcencode_impl!(VarLong, self, tgt, {
             .await
         }
     }
-    .map_err(handle_write_err)
+    .map_err(handle_io_err)
 });
 
 impl From<i64> for VarLong {
@@ -333,10 +339,10 @@ impl From<VarLong> for i64 {
     }
 }
 #[derive(Clone, Debug)]
-pub struct LengthCappedString<const L: usize>(pub String);
+pub struct LengthCappedString<'a, const L: usize>(pub Cow<'a, str>);
 
-impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> MCDecode<'a, R> for LengthCappedString<L> {
-    mcdecode_inner_impl!('a, R, src, version, {
+impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> Decode<'a, R> for LengthCappedString<'a, L> {
+    decode_inner_impl!('a, R, src, version, {
         let str_len = VarInt::decode(src, version).await?.0 as usize;
         if str_len > (L << 2) {
             return Err(Error::Malformed);
@@ -344,16 +350,18 @@ impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> MCDecode<'a, R> for Lengt
         let mut buf = vec![0; str_len];
         match src.read_exact(&mut buf).await {
             Ok(_) => match String::from_utf8(buf) {
-                Ok(str) => Ok(LengthCappedString(str)),
+                Ok(str) => Ok(LengthCappedString(Cow::Owned(str))),
                 Err(_) => todo!(),
             },
-            Err(err) => Err(handle_write_err(err)),
+            Err(err) => Err(handle_io_err(err)),
         }
     });
 }
 
-impl<'a, W: AsyncWriteExt + Unpin + 'a, const L: usize> MCEncode<'a, W> for LengthCappedString<L> {
-    mcencode_inner_impl!('a, W, self, tgt, version, {
+impl<'a, W: AsyncWriteExt + Unpin + 'a, const L: usize> Encode<'a, W>
+    for LengthCappedString<'a, L>
+{
+    encode_inner_impl!('a, W, self, tgt, version, {
         let str = self.0;
         if str.len() > (L << 2) || str.len() > i32::MAX as usize {
             Err(Error::Malformed)
@@ -361,63 +369,55 @@ impl<'a, W: AsyncWriteExt + Unpin + 'a, const L: usize> MCEncode<'a, W> for Leng
             VarInt(str.len() as i32).encode(tgt, version).await?;
             tgt.write_all(str.as_bytes())
                 .await
-                .map_err(handle_write_err)
+                .map_err(handle_io_err)
         }
     });
 }
 
-impl<const L: usize> TryFrom<String> for LengthCappedString<L> {
+impl<'a, const L: usize> TryFrom<String> for LengthCappedString<'a, L> {
     type Error = Error;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if value.len() > (L << 2) || value.len() > i32::MAX as usize {
             Err(Error::Malformed)
         } else {
-            Ok(LengthCappedString(value))
+            Ok(LengthCappedString(Cow::Owned(value)))
         }
     }
 }
 
-impl<const L: usize> TryFrom<&str> for LengthCappedString<L> {
+impl<'a, const L: usize> TryFrom<&'a str> for LengthCappedString<'a, L> {
     type Error = Error;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         if value.len() > (L << 2) || value.len() > i32::MAX as usize {
             Err(Error::Malformed)
         } else {
-            Ok(LengthCappedString(String::from(value)))
+            Ok(LengthCappedString(Cow::Borrowed(value)))
         }
     }
 }
 
-impl<const L: usize> FromStr for LengthCappedString<L> {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.try_into()
-    }
-}
-
-impl<const L: usize> Display for LengthCappedString<L> {
+impl<'a, const L: usize> Display for LengthCappedString<'a, L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-pub type Chat = LengthCappedString<262144>;
+pub type Chat<'a> = LengthCappedString<'a, 262144>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct UUID(pub u128);
 
-mcdecode_impl!(UUID, src, {
+decode_impl!(UUID, src, {
     match src.read_u128().await {
         Ok(num) => Ok(UUID(num)),
-        Err(err) => Err(handle_read_err(err)),
+        Err(err) => Err(handle_io_err(err)),
     }
 });
 
-mcencode_impl!(UUID, self, tgt, {
-    tgt.write_u128(self.0).await.map_err(handle_write_err)
+encode_impl!(UUID, self, tgt, {
+    tgt.write_u128(self.0).await.map_err(handle_io_err)
 });
 
 impl FromStr for UUID {
@@ -462,7 +462,7 @@ pub struct Position {
     pub z: i32,
 }
 
-mcdecode_impl!(Position, src, version, {
+decode_impl!(Position, src, version, {
     i64::decode(src, version).await.map(|num| {
         let (x, y, z) = if version >= ProtocolVersion::V1_14_4 {
             (
@@ -481,62 +481,20 @@ mcdecode_impl!(Position, src, version, {
     })
 });
 
-mcencode_impl!(Position, self, tgt, {
+encode_impl!(Position, self, tgt, {
     let num = ((self.x as u64 & 67108863) << 38)
         | ((self.z as u64 & 67108863) << 12)
         | (self.y as u64 & 4095);
-    tgt.write_u64(num).await.map_err(handle_write_err)
+    tgt.write_u64(num).await.map_err(handle_io_err)
 });
-
-macro_rules! generate {
-    (
-        $(
-            $packet:ident {
-                $(
-                    $field:ident : $type:ty
-                ),* $(,)?
-            }
-        )*
-    ) => {
-        $(
-            #[derive(Debug, Clone)]
-            pub struct $packet {
-                $(
-                    pub $field: $type,
-                )*
-            }
-
-            impl<'a, R: tokio::io::AsyncReadExt + Unpin + 'a> $crate::protocol::types::MCDecode<'a, R> for $packet {
-                $crate::protocol::types::mcdecode_inner_impl!('a, R, src, version, {
-                    Ok($packet {
-                        $(
-                            $field: <$type as $crate::protocol::types::MCDecode<'_, R>>::decode(src, version).await?,
-                        )*
-                    })
-                });
-            }
-
-            impl<'a, W: tokio::io::AsyncWriteExt + Unpin + 'a> $crate::protocol::types::MCEncode<'a, W> for $packet {
-                $crate::protocol::types::mcencode_inner_impl!('a, W, self, tgt, version, {
-                    $(
-                        $crate::protocol::types::MCEncode::encode(self.$field, tgt, version).await?;
-                    )*
-                    Ok(())
-                });
-            }
-        )*
-    };
-}
-
-pub(crate) use generate;
 
 mod tests {
     use std::io::Cursor;
     use tokio::test;
 
     use super::super::version::ProtocolVersion;
-    use super::MCDecode;
-    use super::MCEncode;
+    use super::Decode;
+    use super::Encode;
     use super::Position;
     use super::VarInt;
     use super::VarLong;
@@ -559,14 +517,14 @@ mod tests {
             let mut cursor = Cursor::new(bytes);
             let mut out = Vec::new();
             assert_eq!(
-                VarInt::decode(&mut cursor, ProtocolVersion::V1_8)
+                VarInt::decode(&mut cursor, ProtocolVersion::V1_8_9)
                     .await
                     .unwrap()
                     .0,
                 value
             );
             VarInt(value)
-                .encode(&mut out, ProtocolVersion::V1_8)
+                .encode(&mut out, ProtocolVersion::V1_8_9)
                 .await
                 .unwrap();
             assert_eq!(&out, bytes);
@@ -604,14 +562,14 @@ mod tests {
             let mut cursor = Cursor::new(bytes);
             let mut out = Vec::new();
             assert_eq!(
-                VarLong::decode(&mut cursor, ProtocolVersion::V1_8)
+                VarLong::decode(&mut cursor, ProtocolVersion::V1_8_9)
                     .await
                     .unwrap()
                     .0,
                 value
             );
             VarLong(value)
-                .encode(&mut out, ProtocolVersion::V1_8)
+                .encode(&mut out, ProtocolVersion::V1_8_9)
                 .await
                 .unwrap();
             assert_eq!(&out, bytes);

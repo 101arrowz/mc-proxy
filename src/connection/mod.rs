@@ -1,4 +1,7 @@
 pub mod codec;
+mod connection;
 mod encryption;
-pub mod packets;
+pub mod error;
 mod util;
+
+pub use connection::*;

@@ -1,21 +1,31 @@
 use std::{
+    cmp::min,
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::io::{self, AsyncRead, AsyncReadExt, ReadBuf};
+use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-pub struct Limit<'a, R: AsyncReadExt + Unpin> {
-    reader: &'a mut R,
+pub struct Limit<S> {
+    stream: S,
     limit: usize,
 }
 
-impl<'a, R: AsyncReadExt + Unpin> Limit<'a, R> {
-    pub fn new(reader: &'a mut R, limit: usize) -> Limit<'a, R> {
-        Limit { reader, limit }
+impl<S> Limit<S> {
+    pub fn limit(&self) -> usize {
+        self.limit
     }
 }
 
-impl<'a, R: AsyncReadExt + Unpin> AsyncRead for Limit<'a, R> {
+impl<R: AsyncReadExt + Unpin> Limit<R> {
+    pub fn new_read(reader: R, limit: usize) -> Limit<R> {
+        Limit {
+            stream: reader,
+            limit,
+        }
+    }
+}
+
+impl<R: AsyncReadExt + Unpin> AsyncRead for Limit<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -25,9 +35,49 @@ impl<'a, R: AsyncReadExt + Unpin> AsyncRead for Limit<'a, R> {
             Poll::Ready(Ok(()))
         } else {
             let buf = &mut buf.take(self.limit);
-            Pin::new(&mut self.reader).poll_read(cx, buf).map_ok(|_| {
+            Pin::new(&mut self.stream).poll_read(cx, buf).map_ok(|_| {
                 self.limit -= buf.filled().len();
             })
         }
+    }
+}
+
+impl<W: AsyncWriteExt + Unpin> Limit<W> {
+    pub fn new_write(writer: W, limit: usize) -> Limit<W> {
+        Limit {
+            stream: writer,
+            limit,
+        }
+    }
+}
+
+impl<'a, W: AsyncWriteExt + Unpin> AsyncWrite for Limit<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        if self.limit == 0 {
+            Poll::Ready(Ok(0))
+        } else {
+            let len = min(buf.len(), self.limit);
+            Pin::new(&mut self.stream)
+                .poll_write(cx, &buf[..len])
+                .map_ok(|size| {
+                    self.limit -= size;
+                    size
+                })
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
     }
 }

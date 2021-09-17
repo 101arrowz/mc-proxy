@@ -13,10 +13,10 @@ use tokio::io::{
     ReadBuf,
 };
 
-type MCEncryption = Cfb8<Aes128>;
+type Encryption = Cfb8<Aes128>;
 
-pub struct MCEncryptor<W: AsyncWrite + Unpin> {
-    cipher: Option<MCEncryption>,
+pub struct Encryptor<W: AsyncWrite + Unpin> {
+    cipher: Option<Encryption>,
     tgt: W,
     buffer: Box<[u8]>,
     pos: usize,
@@ -25,9 +25,9 @@ pub struct MCEncryptor<W: AsyncWrite + Unpin> {
 
 const BUFFER_SIZE: usize = 8192;
 
-impl<W: AsyncWrite + Unpin> MCEncryptor<W> {
-    pub fn new(tgt: W) -> MCEncryptor<W> {
-        MCEncryptor {
+impl<W: AsyncWrite + Unpin> Encryptor<W> {
+    pub fn new(tgt: W) -> Encryptor<W> {
+        Encryptor {
             cipher: None,
             tgt,
             buffer: vec![0u8; BUFFER_SIZE].into_boxed_slice(),
@@ -36,8 +36,12 @@ impl<W: AsyncWrite + Unpin> MCEncryptor<W> {
         }
     }
 
-    pub fn set_key(&mut self, key: [u8; 16]) -> Result<(), InvalidLength> {
-        self.cipher = Some(MCEncryption::new_from_slices(&key, &key)?);
+    pub fn set_key(&mut self, key: Option<[u8; 16]>) -> Result<(), InvalidLength> {
+        self.cipher = if let Some(key) = key {
+            Some(Encryption::new_from_slices(&key, &key)?)
+        } else {
+            None
+        };
         Ok(())
     }
 
@@ -53,7 +57,7 @@ impl<W: AsyncWrite + Unpin> MCEncryptor<W> {
     }
 }
 
-impl<W: AsyncWriteExt + Unpin> AsyncWrite for MCEncryptor<W> {
+impl<W: AsyncWriteExt + Unpin> AsyncWrite for Encryptor<W> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -92,23 +96,27 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for MCEncryptor<W> {
     }
 }
 
-pub struct MCDecryptor<R: AsyncReadExt + Unpin> {
-    cipher: Option<MCEncryption>,
+pub struct Decryptor<R: AsyncReadExt + Unpin> {
+    cipher: Option<Encryption>,
     src: R,
 }
 
-impl<R: AsyncReadExt + Unpin> MCDecryptor<R> {
-    pub fn new(src: R) -> MCDecryptor<R> {
-        MCDecryptor { src, cipher: None }
+impl<R: AsyncReadExt + Unpin> Decryptor<R> {
+    pub fn new(src: R) -> Decryptor<R> {
+        Decryptor { src, cipher: None }
     }
 
-    pub fn set_key(&mut self, key: [u8; 16]) -> Result<(), InvalidLength> {
-        self.cipher = Some(MCEncryption::new_from_slices(&key, &key)?);
+    pub fn set_key(&mut self, key: Option<[u8; 16]>) -> Result<(), InvalidLength> {
+        self.cipher = if let Some(key) = key {
+            Some(Encryption::new_from_slices(&key, &key)?)
+        } else {
+            None
+        };
         Ok(())
     }
 }
 
-impl<R: AsyncReadExt + Unpin> AsyncRead for MCDecryptor<R> {
+impl<R: AsyncReadExt + Unpin> AsyncRead for Decryptor<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

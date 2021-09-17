@@ -1,7 +1,6 @@
 #![feature(type_alias_impl_trait)]
 #![feature(generic_associated_types)]
 #![feature(associated_type_defaults)]
-#![feature(concat_idents)]
 
 use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
@@ -12,14 +11,15 @@ mod connection;
 mod protocol;
 
 use protocol::{
-    types::{MCDecode, MCEncode, VarInt},
+    types::{Decode, Encode, VarInt},
     version::ProtocolVersion,
 };
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target = "lunar.gg";
-    let resolver = AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())?;
+    let resolver =
+        AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()).unwrap();
     let (remote_host, remote_port) = if let Ok(srv) = resolver
         .srv_lookup(["_minecraft._tcp.", target].concat())
         .await
@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(mut server) = TcpStream::connect((ip_addr, remote_port)).await {
                 let (mut server_out, mut server_in) = server.split();
                 let err = tokio::join!(async {
-                    let value: i32 = VarInt::decode(&mut client_out, ProtocolVersion::V1_8)
+                    let value: i32 = VarInt::decode(&mut client_out, ProtocolVersion::V1_8_9)
                         .await?
                         .into();
                     io::copy(&mut client_out, &mut server_in).await?;
