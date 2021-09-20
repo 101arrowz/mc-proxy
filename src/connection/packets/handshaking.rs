@@ -6,7 +6,7 @@ use tokio::io::AsyncWriteExt;
 impl Client {
     pub async fn handshake(&mut self, next_state: State) -> Result<(), Error> {
         if self.state == State::Handshaking
-            && (next_state == State::Status && next_state == State::Login)
+            && (next_state == State::Status || next_state == State::Login)
         {
             // handshake packet at most 265 bytes across all versions, present and future
             let mut packet_buffer = [0; 265];

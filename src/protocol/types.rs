@@ -190,6 +190,18 @@ encode_impl!(VarInt, self, tgt, {
     .map_err(handle_io_err)
 });
 
+impl VarInt {
+    pub fn len(&self) -> usize {
+        match self.0 {
+            0..=127 => 1,
+            128..=16383 => 2,
+            16384..=2097151 => 3,
+            2097152..=268435455 => 4,
+            _ => 5
+        } 
+    }
+}
+
 impl From<i32> for VarInt {
     fn from(value: i32) -> Self {
         VarInt(value)
@@ -331,6 +343,23 @@ encode_impl!(VarLong, self, tgt, {
     .map_err(handle_io_err)
 });
 
+impl VarLong {
+    pub fn len(&self) -> usize {
+        match self.0 {
+            0..=127 => 1,
+            128..=16383 => 2,
+            16384..=2097151 => 3,
+            2097152..=268435455 => 4,
+            268435456..=34359738367 => 5,
+            34359738368..=4398046511103 => 6,
+            4398046511104..=562949953421311 => 7,
+            562949953421312..=72057594037927935 => 8,
+            72057594037927936.. => 9,
+            _ => 10
+        } 
+    }
+}
+
 impl From<i64> for VarLong {
     fn from(value: i64) -> Self {
         VarLong(value)
@@ -408,7 +437,57 @@ impl<'a, const L: usize> Display for LengthCappedString<'a, L> {
     }
 }
 
-pub type Chat<'a> = LengthCappedString<'a, 262144>;
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case", tag = "action", content = "value")]
+pub enum ChatClickEvent {
+    OpenUrl(String),
+    RunCommand(String),
+    TwitchUserInfo(String),
+    SuggestCommand(String),
+    ChangePage(usize),
+    CopyToClipboard(String)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "snake_case", tag = "action", content = "value")]
+pub enum ChatHoverEvent {
+    ShowText(Box<Chat>),
+    ShowItem(String),
+    ShowEntity(String)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatObject {
+    bold: Option<bool>,
+    italic: Option<bool>,
+    underlined: Option<bool>,
+    strikethrough: Option<bool>,
+    obfuscated: Option<bool>,
+    color: Option<String>,
+    insertion: Option<String>,
+    click_event: Option<ChatClickEvent>,
+    hover_event: Option<ChatHoverEvent>,
+    extra: Option<Vec<Chat>>,
+    text: String
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum Chat {
+    Raw(String),
+    Array(Vec<Chat>),
+    Object(ChatObject)
+}
+
+decode_impl!(Chat, src, version, {
+    serde_json::from_str(&LengthCappedString::<262144>::decode(src, version).await?.0).map_err(|_| Error::Malformed)
+});
+
+encode_impl!(Chat, self, tgt, version, {
+    let chat: LengthCappedString<262144> = serde_json::to_string(&self).map_err(|_| Error::Malformed)?.try_into()?;
+    chat.encode(tgt, version).await
+});
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct UUID(pub u128);

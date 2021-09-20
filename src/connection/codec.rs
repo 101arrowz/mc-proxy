@@ -149,25 +149,30 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         id: i32,
         len: usize,
     ) -> Result<OutgoingPacket<'_, W>, Error> {
+        dbg!(id, len);
         if len > 2097151 {
             Err(Error::PacketTooBig(len))
         } else {
-            VarInt(len as i32)
-                .encode(&mut self.conn, self.version)
-                .await?;
-            VarInt(id).encode(&mut self.conn, self.version).await?;
-            let packet = if self
+            let id = VarInt(id);
+            let mut packet = if /*self
                 .compress_threshold
                 .map(|threshold| len > threshold)
-                .unwrap_or(false)
+                .unwrap_or(false)*/ false // TODO
             {
+                todo!();
                 OutgoingInnerPacket::Compressed(Limit::new_write(
                     ZlibEncoder::new(&mut self.conn),
                     len,
                 ))
             } else {
-                OutgoingInnerPacket::Normal(Limit::new_write(&mut self.conn, len))
+                let limit = len + id.len();
+                dbg!(limit);
+                VarInt(limit as i32)
+                    .encode(&mut self.conn, self.version)
+                    .await?;
+                OutgoingInnerPacket::Normal(Limit::new_write(&mut self.conn, limit))
             };
+            id.encode(&mut packet, self.version).await?;
             Ok(packet)
         }
     }

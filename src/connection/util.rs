@@ -11,7 +11,7 @@ pub struct Limit<S> {
 }
 
 impl<S> Limit<S> {
-    pub fn limit(&self) -> usize {
+    pub fn remaining(&self) -> usize {
         self.limit
     }
 }
@@ -34,9 +34,9 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for Limit<R> {
         if self.limit == 0 {
             Poll::Ready(Ok(()))
         } else {
-            let buf = &mut buf.take(self.limit);
+            let start_filled_len = buf.filled().len();
             Pin::new(&mut self.stream).poll_read(cx, buf).map_ok(|_| {
-                self.limit -= buf.filled().len();
+                self.limit -= buf.filled().len() - start_filled_len;
             })
         }
     }

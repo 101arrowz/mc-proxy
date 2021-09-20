@@ -1,4 +1,5 @@
 use crate::connection::{error::Error, Client, State};
+use crate::protocol::types::Chat;
 use crate::protocol::{
     error::Error as ProtocolError,
     types::{Decode, Encode, LengthCappedString, UUID},
@@ -22,19 +23,14 @@ pub struct SamplePlayer {
 pub struct Players {
     max: usize,
     online: usize,
-    sample: Vec<SamplePlayer>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Description {
-    text: String,
+    sample: Option<Vec<SamplePlayer>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Status {
     version: Version,
     players: Players,
-    description: Description,
+    description: Chat,
     favicon: Option<String>,
 }
 
@@ -46,13 +42,17 @@ impl Client {
                 let mut packet = self.inbound.next_packet().await?;
                 match packet.id {
                     0 => {
+                        let status_str = &LengthCappedString::<32767>::decode(&mut packet.content, self.version)
+                            .await?
+                            .0;
                         match serde_json::from_str(
-                            &LengthCappedString::<32767>::decode(&mut packet.content, self.version)
-                                .await?
-                                .0,
+                            status_str,
                         ) {
                             Ok(status) => break Ok(status),
-                            Err(_) => Err(ProtocolError::Malformed)?,
+                            Err(err) => {
+                                dbg!(status_str, err);
+                                Err(ProtocolError::Malformed)?
+                            },
                         }
                     }
                     1 => {
