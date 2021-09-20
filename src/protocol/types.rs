@@ -1,10 +1,14 @@
 use super::{error::Error, version::ProtocolVersion};
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 use std::{
     borrow::Cow,
     convert::{TryFrom, TryInto},
     fmt::{self, Display},
     future::Future,
-    str::{from_utf8, FromStr},
+    str::{from_utf8, from_utf8_unchecked, FromStr},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -187,14 +191,14 @@ encode_impl!(VarInt, self, tgt, {
 });
 
 impl From<i32> for VarInt {
-    fn from(val: i32) -> Self {
-        VarInt(val)
+    fn from(value: i32) -> Self {
+        VarInt(value)
     }
 }
 
 impl From<VarInt> for i32 {
-    fn from(val: VarInt) -> Self {
-        val.0
+    fn from(value: VarInt) -> Self {
+        value.0
     }
 }
 
@@ -328,14 +332,14 @@ encode_impl!(VarLong, self, tgt, {
 });
 
 impl From<i64> for VarLong {
-    fn from(val: i64) -> Self {
-        VarLong(val)
+    fn from(value: i64) -> Self {
+        VarLong(value)
     }
 }
 
 impl From<VarLong> for i64 {
-    fn from(val: VarLong) -> Self {
-        val.0
+    fn from(value: VarLong) -> Self {
+        value.0
     }
 }
 #[derive(Clone, Debug)]
@@ -409,6 +413,39 @@ pub type Chat<'a> = LengthCappedString<'a, 262144>;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct UUID(pub u128);
 
+impl UUID {
+    fn to_ascii_bytes(&self) -> [u8; 32] {
+        let mut buf = [0; 32];
+        for i in 0..16 {
+            let byte = (self.0 >> (i << 3)) as u8;
+            let hex_a = byte & 15;
+            buf[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'A' - 10 });
+            let hex_b = byte >> 4;
+            buf[(i << 1) + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'A' - 10 });
+        }
+        buf
+    }
+
+    fn to_ascii_bytes_hyphenated(&self) -> [u8; 36] {
+        let mut buf = [b'-'; 36];
+        for i in 0..16 {
+            let byte = (self.0 >> (i << 3)) as u8;
+            let index = match i {
+                0..=3 => i << 1,
+                4..=5 => (i << 1) + 1,
+                6..=7 => (i << 1) + 2,
+                8..=9 => (i << 1) + 3,
+                _ => (i << 1) + 4,
+            };
+            let hex_a = byte & 15;
+            buf[index] = hex_a + (if hex_a < 10 { b'0' } else { b'A' - 10 });
+            let hex_b = byte >> 4;
+            buf[index + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'A' - 10 });
+        }
+        buf
+    }
+}
+
 decode_impl!(UUID, src, {
     match src.read_u128().await {
         Ok(num) => Ok(UUID(num)),
@@ -424,34 +461,61 @@ impl FromStr for UUID {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() != 32 {
-            return Err(Error::Malformed);
+        if s.len() == 32 || s.len() == 36 {
+            let mut res = 0u128;
+            for (ind, byte) in s.bytes().filter(|&v| v != b'-').enumerate() {
+                res |= ((match byte {
+                    b'0'..=b'9' => byte - b'0',
+                    b'a'..=b'f' => byte - b'a' + 10,
+                    b'A'..=b'F' => byte - b'A' + 10,
+                    _ => return Err(Error::Malformed),
+                }) as u128)
+                    << (ind << 2);
+            }
+            Ok(UUID(res))
+        } else {
+            Err(Error::Malformed)
         }
-        let mut res = 0u128;
-        for (ind, byte) in s.bytes().enumerate() {
-            res |= ((match byte {
-                b'0'..=b'9' => byte - b'0',
-                b'a'..=b'f' => byte - b'a' + 10,
-                b'A'..=b'F' => byte - b'A' + 10,
-                _ => return Err(Error::Malformed),
-            }) as u128)
-                << (ind << 2);
-        }
-        Ok(UUID(res))
+    }
+}
+
+impl TryFrom<&str> for UUID {
+    type Error = <Self as FromStr>::Err;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        value.parse()
     }
 }
 
 impl Display for UUID {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut buf = [0; 32];
-        for i in 0..16 {
-            let byte = (self.0 >> (i << 3)) as u8;
-            let hex_a = byte & 15;
-            buf[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'A' - 10 });
-            let hex_b = byte >> 4;
-            buf[(i << 1) + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'A' - 10 });
-        }
-        f.write_str(from_utf8(&buf).unwrap())
+        f.write_str(unsafe { from_utf8_unchecked(&self.to_ascii_bytes_hyphenated()) })
+    }
+}
+
+impl Serialize for UUID {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(unsafe { from_utf8_unchecked(&self.to_ascii_bytes_hyphenated()) })
+    }
+}
+
+struct UUIDVisitor;
+
+impl<'de> Visitor<'de> for UUIDVisitor {
+    type Value = UUID;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a UUID")
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+        value.parse().map_err(|err| E::custom(err))
+    }
+}
+
+impl<'de> Deserialize<'de> for UUID {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(UUIDVisitor)
     }
 }
 

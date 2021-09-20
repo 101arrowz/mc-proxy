@@ -40,9 +40,9 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for IncomingInnerPacket<R> {
 }
 
 pub struct IncomingPacket<'a, R: AsyncReadExt + Unpin> {
-    len: usize,
-    id: i32,
-    content: IncomingInnerPacket<&'a mut Decryptor<R>>,
+    pub len: usize,
+    pub id: i32,
+    pub content: IncomingInnerPacket<&'a mut Decryptor<R>>,
 }
 
 impl<R: AsyncReadExt + Unpin> InboundConnection<R> {
@@ -55,7 +55,7 @@ impl<R: AsyncReadExt + Unpin> InboundConnection<R> {
     }
 
     pub async fn next_packet(&mut self) -> Result<IncomingPacket<'_, R>, Error> {
-        let len: i32 = VarInt::decode(&mut self.conn, self.version).await?.into();
+        let len = VarInt::decode(&mut self.conn, self.version).await?.0;
         if len > 2097151 {
             Err(Error::PacketTooBig(len as usize))
         } else if len < 0 {
@@ -63,14 +63,10 @@ impl<R: AsyncReadExt + Unpin> InboundConnection<R> {
         } else {
             let len = len as usize;
             let mut rest_of_packet = Limit::new_read(&mut self.conn, len);
-            let mut id = VarInt::decode(&mut rest_of_packet, self.version)
-                .await?
-                .into();
+            let mut id = VarInt::decode(&mut rest_of_packet, self.version).await?.0;
             let content = if self.compressed {
                 let decompressed_size = id;
-                id = VarInt::decode(&mut rest_of_packet, self.version)
-                    .await?
-                    .into();
+                id = VarInt::decode(&mut rest_of_packet, self.version).await?.0;
                 if decompressed_size == 0 {
                     IncomingInnerPacket::Normal(rest_of_packet)
                 } else {
