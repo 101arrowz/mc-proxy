@@ -12,7 +12,7 @@ use connection::{Client, State};
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = Client::connect("bwhub.net", ProtocolVersion::V1_8_9).await?;
-    client.handshake(State::Status).await?;
-    dbg!(client.status().await?);
+    // client.handshake(State::Status).await?;
+    // dbg!(client.status().await?);
     Ok(())
 }

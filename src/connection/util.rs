@@ -16,12 +16,16 @@ impl<S> Limit<S> {
     }
 }
 
-impl<R: AsyncReadExt + Unpin> Limit<R> {
-    pub fn new_read(reader: R, limit: usize) -> Limit<R> {
+impl<S> Limit<S> {
+    pub fn new(stream: S, limit: usize) -> Limit<S> {
         Limit {
-            stream: reader,
+            stream,
             limit,
         }
+    }
+
+    pub fn get_ref(&self) -> &S {
+        &self.stream
     }
 }
 
@@ -38,15 +42,6 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for Limit<R> {
             Pin::new(&mut self.stream).poll_read(cx, buf).map_ok(|_| {
                 self.limit -= buf.filled().len() - start_filled_len;
             })
-        }
-    }
-}
-
-impl<W: AsyncWriteExt + Unpin> Limit<W> {
-    pub fn new_write(writer: W, limit: usize) -> Limit<W> {
-        Limit {
-            stream: writer,
-            limit,
         }
     }
 }

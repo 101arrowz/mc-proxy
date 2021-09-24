@@ -437,7 +437,166 @@ impl<'a, const L: usize> Display for LengthCappedString<'a, L> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+const BLACK: &str = "black";
+const DARK_BLUE: &str = "dark_blue";
+const DARK_GREEN: &str = "dark_green";
+const DARK_AQUA: &str = "dark_aqua";
+const DARK_RED: &str = "dark_red";
+const DARK_PURPLE: &str = "dark_purple";
+const GOLD: &str = "gold";
+const GRAY: &str = "gray";
+const DARK_GRAY: &str = "dark_gray";
+const BLUE: &str = "blue";
+const GREEN: &str = "green";
+const AQUA: &str = "aqua";
+const RED: &str = "red";
+const LIGHT_PURPLE: &str = "light_purple";
+const YELLOW: &str = "yellow";
+const WHITE: &str = "white";
+const RESET: &str = "reset";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Color {
+    Black,
+    DarkBlue,
+    DarkGreen,
+    DarkAqua,
+    DarkRed,
+    DarkPurple,
+    Gold,
+    Gray,
+    DarkGray,
+    Blue,
+    Green,
+    Aqua,
+    Red,
+    LightPurple,
+    Yellow,
+    White,
+    Reset,
+    Hex(u32)
+}
+
+impl FromStr for Color {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            BLACK => Ok(Color::Black),
+            DARK_BLUE => Ok(Color::DarkBlue),
+            DARK_GREEN => Ok(Color::DarkGreen),
+            DARK_AQUA => Ok(Color::DarkAqua),
+            DARK_RED => Ok(Color::DarkRed),
+            DARK_PURPLE => Ok(Color::DarkPurple),
+            GOLD => Ok(Color::Gold),
+            GRAY => Ok(Color::Gray),
+            DARK_GRAY => Ok(Color::DarkGray),
+            BLUE => Ok(Color::Blue),
+            GREEN => Ok(Color::Green),
+            AQUA => Ok(Color::Aqua),
+            RED => Ok(Color::Red),
+            LIGHT_PURPLE => Ok(Color::LightPurple),
+            YELLOW => Ok(Color::Yellow),
+            WHITE => Ok(Color::White),
+            RESET => Ok(Color::Reset),
+            other => {
+                if other.len() == 7 && other.as_bytes()[0] == b'#' {
+                    let mut hex = 0;
+                    for (ind, byte) in other[1..].bytes().rev().enumerate() {
+                        hex |= (match byte {
+                            b'0'..=b'9' => byte - b'0',
+                            b'a'..=b'f' => byte - b'a' + 10,
+                            b'A'..=b'F' => byte - b'A' + 10,
+                            _ => return Err(Error::Malformed)
+                        } as u32) << (ind << 2);
+                    }
+                    Ok(Color::Hex(hex))
+                } else {
+                    Err(Error::Malformed)
+                }
+            }
+        }
+    }
+}
+
+impl TryFrom<&str> for Color {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl From<&Color> for Cow<'_, str> {
+    fn from(value: &Color) -> Self {
+        if let &Color::Hex(hex) = value {
+            let mut buf = Vec::with_capacity(7);
+            buf.push(b'#');
+            for i in 2..8 {
+                let value = ((hex >> (i << 2)) & 15) as u8;
+                buf.push(value + (if value < 10 { b'0' } else { b'A' - 10 }));
+            }
+            Cow::Owned(unsafe { String::from_utf8_unchecked(buf) })
+        } else {
+            Cow::Borrowed(match value {
+                Color::Black => BLACK,
+                Color::DarkBlue => DARK_BLUE,
+                Color::DarkGreen => DARK_GREEN,
+                Color::DarkAqua => DARK_AQUA,
+                Color::DarkRed => DARK_RED,
+                Color::DarkPurple => DARK_PURPLE,
+                Color::Gold => GOLD,
+                Color::Gray => GRAY,
+                Color::DarkGray => DARK_GRAY,
+                Color::Blue => BLUE,
+                Color::Green => GREEN,
+                Color::Aqua => AQUA,
+                Color::Red => RED,
+                Color::LightPurple => LIGHT_PURPLE,
+                Color::Yellow => YELLOW,
+                Color::White => WHITE,
+                Color::Reset => RESET,
+                _ => unreachable!()
+            })
+        }
+    }
+}
+
+impl Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let repr: Cow<'_, str> = self.into();
+        f.write_str(&repr)
+    }
+}
+
+impl Serialize for Color {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let repr: Cow<'_, str> = self.into();
+        serializer.serialize_str(&repr)
+    }
+}
+
+struct ColorVisitor;
+
+impl<'de> Visitor<'de> for ColorVisitor {
+    type Value = Color;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a color")
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+        value.parse().map_err(E::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for Color {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(ColorVisitor)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "action", content = "value")]
 pub enum ChatClickEvent {
     OpenUrl(String),
@@ -448,15 +607,44 @@ pub enum ChatClickEvent {
     CopyToClipboard(String)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "action", content = "value")]
 pub enum ChatHoverEvent {
     ShowText(Box<Chat>),
     ShowItem(String),
-    ShowEntity(String)
+    ShowEntity(String),
+    ShowAchievement(String)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ChatScore {
+    name: String,
+    objective: String,
+    value: Option<String>
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum ChatValue {
+    Text {
+        text: String
+    },
+    Translate {
+        translate: String,
+        with: Vec<Chat>
+    },
+    Score {
+        score: ChatScore
+    },
+    Keybind {
+        keybind: String
+    },
+    Selector {
+        selector: String
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatObject {
     bold: Option<bool>,
@@ -464,15 +652,16 @@ pub struct ChatObject {
     underlined: Option<bool>,
     strikethrough: Option<bool>,
     obfuscated: Option<bool>,
-    color: Option<String>,
+    color: Option<Color>,
     insertion: Option<String>,
     click_event: Option<ChatClickEvent>,
     hover_event: Option<ChatHoverEvent>,
     extra: Option<Vec<Chat>>,
-    text: String
+    #[serde(flatten)]
+    value: ChatValue
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum Chat {
     Raw(String),
@@ -480,11 +669,63 @@ pub enum Chat {
     Object(ChatObject)
 }
 
+impl Chat {
+    // Note: version fix cannot be undone, i.e. roundtrip is lossy
+    fn fix_version(&mut self, version: ProtocolVersion) {
+        match self {
+            Chat::Object(object) => {
+                if let Some(extra) = &mut object.extra {
+                    for chat in extra {
+                        chat.fix_version(version);
+                    }
+                }
+                if let ChatValue::Translate {
+                    with,
+                    ..
+                } = &mut object.value {
+                    for chat in with {
+                        chat.fix_version(version);
+                    }
+                }
+                if let Some(ChatHoverEvent::ShowText(chat)) = &mut object.hover_event {
+                    chat.fix_version(version);
+                }
+                if version >= ProtocolVersion::V1_12 {
+                    if let Some(ChatHoverEvent::ShowAchievement(achievement)) = object.hover_event.take() {
+                        object.hover_event = Some(ChatHoverEvent::ShowText(Box::new(Chat::Raw(achievement))));
+                    }
+                }
+                if version > ProtocolVersion::V1_8_9 {
+                    if let Some(ChatClickEvent::TwitchUserInfo(username)) = &object.click_event {
+                        const TWITCH_URL_PREFIX: &str = "https://twitch.tv/";
+                        let mut url = String::with_capacity(TWITCH_URL_PREFIX.len() + username.len());
+                        url.push_str(TWITCH_URL_PREFIX);
+                        url.push_str(username);
+                        object.click_event = Some(ChatClickEvent::OpenUrl(url));
+                    }
+                }
+                if version < ProtocolVersion::V1_16 {
+                    if let Some(Color::Hex(_)) = object.color {
+                        object.color = Some(Color::Reset);
+                    }
+                }
+            },
+            Chat::Array(array) => {
+                for chat in array {
+                    chat.fix_version(version);
+                }
+            },
+            _ => {}
+        }
+    }
+}
+
 decode_impl!(Chat, src, version, {
     serde_json::from_str(&LengthCappedString::<262144>::decode(src, version).await?.0).map_err(|_| Error::Malformed)
 });
 
 encode_impl!(Chat, self, tgt, version, {
+    self.fix_version(version);
     let chat: LengthCappedString<262144> = serde_json::to_string(&self).map_err(|_| Error::Malformed)?.try_into()?;
     chat.encode(tgt, version).await
 });
@@ -588,7 +829,7 @@ impl<'de> Visitor<'de> for UUIDVisitor {
     }
 
     fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-        value.parse().map_err(|err| E::custom(err))
+        value.parse().map_err(E::custom)
     }
 }
 
@@ -616,7 +857,7 @@ decode_impl!(Position, src, version, {
         } else {
             (
                 (num >> 38) as i32,
-                (num << 12 >> 38) as i32,
+                (num << 26 >> 52) as i32,
                 (num << 38 >> 38) as i32,
             )
         };
@@ -624,11 +865,21 @@ decode_impl!(Position, src, version, {
     })
 });
 
-encode_impl!(Position, self, tgt, {
-    let num = ((self.x as u64 & 67108863) << 38)
-        | ((self.z as u64 & 67108863) << 12)
-        | (self.y as u64 & 4095);
-    tgt.write_u64(num).await.map_err(handle_io_err)
+encode_impl!(Position, self, tgt, version, {
+    if self.x > 33554431 || self.x < -33554432 || self.y > 2047 || self.y < -2048 || self.z > 33554431 || self.z < -33554431 {
+        Err(Error::Malformed)
+    } else {
+        let num = if version >= ProtocolVersion::V1_14_4 {
+            ((self.x as u64) << 38)
+            | ((self.z as u64) << 12)
+            | (self.y as u64)
+        } else {
+            ((self.x as u64) << 38)
+            | ((self.y as u64) << 26)
+            | (self.z as u64)
+        };
+        tgt.write_u64(num).await.map_err(handle_io_err)
+    }
 });
 
 mod tests {

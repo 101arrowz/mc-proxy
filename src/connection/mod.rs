@@ -18,7 +18,7 @@ use super::protocol::version::ProtocolVersion;
 use codec::{InboundConnection, OutboundConnection};
 use error::Error;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum State {
     Handshaking = 0,
     Status = 1,

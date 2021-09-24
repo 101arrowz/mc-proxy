@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug, PartialEq, Error)]
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum Error {
     #[error("unexpected end of input")]
     UnexpectedEof,
