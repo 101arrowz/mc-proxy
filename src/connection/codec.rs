@@ -147,49 +147,56 @@ pub enum OutgoingInnerPacket<W: AsyncWriteExt + Unpin> {
 }
 
 impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
-    fn new(tgt: W, len: Option<usize>, threshold: Option<usize>, version: ProtocolVersion) -> OutgoingInnerPacket<W> {
+    async fn new(mut tgt: W, len: Option<usize>, threshold: Option<usize>, version: ProtocolVersion) -> Result<OutgoingInnerPacket<W>, Error> {
         if let Some(threshold) = threshold {
             if let Some(len) = len {
-                if len > threshold {
-                    OutgoingInnerPacket::Compressed {
+                if len > 2097151 {
+                    Err(Error::PacketTooBig(len))
+                } else if len > threshold {
+                    Ok(OutgoingInnerPacket::Compressed {
                         vec: Limit::new(MaybeZlibVec::Some(ZlibEncoder::new(Vec::with_capacity(len >> 1))), len),
                         version,
                         len: 0,
                         cache: Vec::new(),
                         shutting_down: false,
                         tgt
-                    }
+                    })
                 } else {
-                    OutgoingInnerPacket::Compressed {
+                    Ok(OutgoingInnerPacket::Compressed {
                         vec: Limit::new(MaybeZlibVec::None, len),
                         version,
                         len: 0,
                         cache: Vec::with_capacity(len + 1),
                         shutting_down: false,
                         tgt
-                    }
+                    })
                 }
             } else {
-                OutgoingInnerPacket::Compressed {
+                Ok(OutgoingInnerPacket::Compressed {
                     vec: Limit::new(MaybeZlibVec::Some(ZlibEncoder::new(Vec::new())), usize::MAX),
                     version,
                     len: 0,
                     cache: Vec::with_capacity(threshold + 1),
                     shutting_down: false,
                     tgt
-                }
+                })
             }
         } else {
             if let Some(len) = len {
-                OutgoingInnerPacket::Normal(Limit::new(tgt, len))
+                if len > 2097151 {
+                    Err(Error::PacketTooBig(len))
+                } else {
+                    VarInt(len as i32).encode(&mut tgt, version).await?;
+                    Ok(OutgoingInnerPacket::Normal(Limit::new(tgt, len)))
+                }
             } else {
-                OutgoingInnerPacket::UnknownLength {
+                Ok(OutgoingInnerPacket::UnknownLength {
                     vec: Vec::new(),
                     version,
                     len: 0,
                     shutting_down: false,
                     tgt
-                }
+                })
             }
         }
     }
@@ -378,7 +385,7 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         len: Option<usize>,
     ) -> Result<OutgoingPacket<'_, W>, Error> {
         let id = VarInt(id);
-        let mut packet = OutgoingInnerPacket::new(&mut self.conn, len, self.compress_threshold, self.version);
+        let mut packet = OutgoingInnerPacket::new(&mut self.conn, len.map(|s| s + id.len()), self.compress_threshold, self.version).await?;
         id.encode(&mut packet, self.version).await?;
         Ok(packet)
     }
