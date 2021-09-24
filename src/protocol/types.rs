@@ -1,14 +1,12 @@
 use super::{error::Error, version::ProtocolVersion};
-use serde::{
-    de::{self, Visitor},
-    Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::{Deserialize, Serialize};
+use serde_with::{SerializeDisplay, DeserializeFromStr, skip_serializing_none};
 use std::{
     borrow::Cow,
     convert::{TryFrom, TryInto},
     fmt::{self, Display},
     future::Future,
-    str::{from_utf8, from_utf8_unchecked, FromStr},
+    str::{from_utf8_unchecked, FromStr},
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -197,8 +195,8 @@ impl VarInt {
             128..=16383 => 2,
             16384..=2097151 => 3,
             2097152..=268435455 => 4,
-            _ => 5
-        } 
+            _ => 5,
+        }
     }
 }
 
@@ -355,8 +353,8 @@ impl VarLong {
             4398046511104..=562949953421311 => 7,
             562949953421312..=72057594037927935 => 8,
             72057594037927936.. => 9,
-            _ => 10
-        } 
+            _ => 10,
+        }
     }
 }
 
@@ -374,7 +372,7 @@ impl From<VarLong> for i64 {
 #[derive(Clone, Debug)]
 pub struct LengthCappedString<'a, const L: usize>(pub Cow<'a, str>);
 
-impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> Decode<'a, R> for LengthCappedString<'a, L> {
+impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> Decode<'a, R> for LengthCappedString<'static, L> {
     decode_inner_impl!('a, R, src, version, {
         let str_len = VarInt::decode(src, version).await?.0 as usize;
         if str_len > (L << 2) {
@@ -455,7 +453,7 @@ const YELLOW: &str = "yellow";
 const WHITE: &str = "white";
 const RESET: &str = "reset";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub enum Color {
     Black,
     DarkBlue,
@@ -474,7 +472,7 @@ pub enum Color {
     Yellow,
     White,
     Reset,
-    Hex(u32)
+    Hex(u32),
 }
 
 impl FromStr for Color {
@@ -507,8 +505,9 @@ impl FromStr for Color {
                             b'0'..=b'9' => byte - b'0',
                             b'a'..=b'f' => byte - b'a' + 10,
                             b'A'..=b'F' => byte - b'A' + 10,
-                            _ => return Err(Error::Malformed)
-                        } as u32) << (ind << 2);
+                            _ => return Err(Error::Malformed),
+                        } as u32)
+                            << (ind << 2);
                     }
                     Ok(Color::Hex(hex))
                 } else {
@@ -556,7 +555,7 @@ impl From<&Color> for Cow<'_, str> {
                 Color::Yellow => YELLOW,
                 Color::White => WHITE,
                 Color::Reset => RESET,
-                _ => unreachable!()
+                _ => unreachable!(),
             })
         }
     }
@@ -569,107 +568,151 @@ impl Display for Color {
     }
 }
 
-impl Serialize for Color {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let repr: Cow<'_, str> = self.into();
-        serializer.serialize_str(&repr)
-    }
-}
-
-struct ColorVisitor;
-
-impl<'de> Visitor<'de> for ColorVisitor {
-    type Value = Color;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a color")
-    }
-
-    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-        value.parse().map_err(E::custom)
-    }
-}
-
-impl<'de> Deserialize<'de> for Color {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_str(ColorVisitor)
-    }
-}
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "action", content = "value")]
-pub enum ChatClickEvent {
-    OpenUrl(String),
-    RunCommand(String),
-    TwitchUserInfo(String),
-    SuggestCommand(String),
+pub enum ChatClickEvent<'a> {
+    OpenUrl(Cow<'a, str>),
+    RunCommand(Cow<'a, str>),
+    TwitchUserInfo(Cow<'a, str>),
+    SuggestCommand(Cow<'a, str>),
     ChangePage(usize),
-    CopyToClipboard(String)
+    CopyToClipboard(Cow<'a, str>)
+}
+
+impl<'a> ChatClickEvent<'a> {
+    pub fn into_owned(self) -> ChatClickEvent<'static> {
+        match self {
+            ChatClickEvent::OpenUrl(url) => ChatClickEvent::OpenUrl(Cow::Owned(url.into_owned())),
+            ChatClickEvent::RunCommand(command) => ChatClickEvent::RunCommand(Cow::Owned(command.into_owned())),
+            ChatClickEvent::TwitchUserInfo(username) => ChatClickEvent::TwitchUserInfo(Cow::Owned(username.into_owned())),
+            ChatClickEvent::SuggestCommand(command) => ChatClickEvent::SuggestCommand(Cow::Owned(command.into_owned())),
+            ChatClickEvent::CopyToClipboard(text) => ChatClickEvent::CopyToClipboard(Cow::Owned(text.into_owned())),
+            ChatClickEvent::ChangePage(page) => ChatClickEvent::ChangePage(page)
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "action", content = "value")]
-pub enum ChatHoverEvent {
-    ShowText(Box<Chat>),
-    ShowItem(String),
-    ShowEntity(String),
-    ShowAchievement(String)
+pub enum ChatHoverEvent<'a> {
+    ShowText(Box<Chat<'a>>),
+    // TODO: Serialize and deserialize JSON-NBT
+    // JSON-NBT (a.k.a. SNBT)
+    ShowItem(Cow<'a, str>),
+    // JSON-NBT (a.k.a. SNBT)
+    ShowEntity(Cow<'a, str>),
+    ShowAchievement(Cow<'a, str>),
 }
 
+impl<'a> ChatHoverEvent<'a> {
+    pub fn into_owned(self) -> ChatHoverEvent<'static> {
+        match self {
+            ChatHoverEvent::ShowText(text) => ChatHoverEvent::ShowText(Box::new(text.into_owned())),
+            ChatHoverEvent::ShowItem(item) => ChatHoverEvent::ShowItem(Cow::Owned(item.into_owned())),
+            ChatHoverEvent::ShowEntity(entity) => ChatHoverEvent::ShowEntity(Cow::Owned(entity.into_owned())),
+            ChatHoverEvent::ShowAchievement(achievement) => ChatHoverEvent::ShowAchievement(Cow::Owned(achievement.into_owned()))
+        }
+    }
+}
+
+#[skip_serializing_none]
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ChatScore {
-    name: String,
-    objective: String,
-    value: Option<String>
+pub struct ChatScore<'a> {
+    name: Cow<'a, str>,
+    objective: Cow<'a, str>,
+    value: Option<Cow<'a, str>>,
+}
+
+impl<'a> ChatScore<'a> {
+    pub fn into_owned(self) -> ChatScore<'static> {
+        ChatScore {
+            name: Cow::Owned(self.name.into_owned()),
+            objective: Cow::Owned(self.objective.into_owned()),
+            value: self.value.map(|val| Cow::Owned(val.into_owned()))
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
-pub enum ChatValue {
+pub enum ChatValue<'a> {
     Text {
-        text: String
+        text: Cow<'a, str>,
     },
     Translate {
-        translate: String,
-        with: Vec<Chat>
+        translate: Cow<'a, str>,
+        with: Vec<Chat<'a>>,
     },
     Score {
-        score: ChatScore
+        score: ChatScore<'a>,
     },
     Keybind {
-        keybind: String
+        keybind: Cow<'a, str>,
     },
     Selector {
-        selector: String
+        selector: Cow<'a, str>,
+    },
+}
+
+impl<'a> ChatValue<'a> {
+    pub fn into_owned(self) -> ChatValue<'static> {
+        match self {
+            ChatValue::Text { text } => ChatValue::Text { text: Cow::Owned(text.into_owned()) },
+            ChatValue::Translate { translate, with } => ChatValue::Translate { translate: Cow::Owned(translate.into_owned()), with: with.into_iter().map(Chat::into_owned).collect() },
+            ChatValue::Score { score } => ChatValue::Score { score: score.into_owned() },
+            ChatValue::Keybind { keybind } => ChatValue::Keybind { keybind: Cow::Owned(keybind.into_owned()) },
+            ChatValue::Selector { selector } => ChatValue::Selector { selector: Cow::Owned(selector.into_owned()) },
+        }
     }
 }
 
+#[serde_with::skip_serializing_none]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct ChatObject {
+pub struct ChatObject<'a> {
     bold: Option<bool>,
     italic: Option<bool>,
     underlined: Option<bool>,
     strikethrough: Option<bool>,
     obfuscated: Option<bool>,
     color: Option<Color>,
-    insertion: Option<String>,
-    click_event: Option<ChatClickEvent>,
-    hover_event: Option<ChatHoverEvent>,
-    extra: Option<Vec<Chat>>,
+    insertion: Option<Cow<'a, str>>,
+    click_event: Option<ChatClickEvent<'a>>,
+    hover_event: Option<ChatHoverEvent<'a>>,
+    extra: Option<Vec<Chat<'a>>>,
     #[serde(flatten)]
-    value: ChatValue
+    value: ChatValue<'a>,
+}
+
+impl<'a> ChatObject<'a> {
+    pub fn into_owned(self) -> ChatObject<'static> {
+        ChatObject {
+            insertion: self.insertion.map(|val| Cow::Owned(val.into_owned())),
+            click_event: self.click_event.map(ChatClickEvent::into_owned),
+            hover_event: self.hover_event.map(ChatHoverEvent::into_owned),
+            extra: self.extra.map(|extra| extra.into_iter().map(Chat::into_owned).collect()),
+            value: self.value.into_owned(),
+
+            // tried ..self, borrowck complained
+            bold: self.bold,
+            italic: self.italic,
+            underlined: self.underlined,
+            strikethrough: self.strikethrough,
+            obfuscated: self.obfuscated,
+            color: self.color
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
-pub enum Chat {
-    Raw(String),
-    Array(Vec<Chat>),
-    Object(ChatObject)
+pub enum Chat<'a> {
+    Raw(Cow<'a, str>),
+    Array(Vec<Chat<'a>>),
+    Object(ChatObject<'a>),
 }
 
-impl Chat {
+impl<'a> Chat<'a> {
     // Note: version fix cannot be undone, i.e. roundtrip is lossy
     fn fix_version(&mut self, version: ProtocolVersion) {
         match self {
@@ -679,10 +722,7 @@ impl Chat {
                         chat.fix_version(version);
                     }
                 }
-                if let ChatValue::Translate {
-                    with,
-                    ..
-                } = &mut object.value {
+                if let ChatValue::Translate { with, .. } = &mut object.value {
                     for chat in with {
                         chat.fix_version(version);
                     }
@@ -691,17 +731,21 @@ impl Chat {
                     chat.fix_version(version);
                 }
                 if version >= ProtocolVersion::V1_12 {
-                    if let Some(ChatHoverEvent::ShowAchievement(achievement)) = object.hover_event.take() {
-                        object.hover_event = Some(ChatHoverEvent::ShowText(Box::new(Chat::Raw(achievement))));
+                    if let Some(ChatHoverEvent::ShowAchievement(achievement)) =
+                        object.hover_event.take()
+                    {
+                        object.hover_event =
+                            Some(ChatHoverEvent::ShowText(Box::new(Chat::Raw(achievement))));
                     }
                 }
                 if version > ProtocolVersion::V1_8_9 {
                     if let Some(ChatClickEvent::TwitchUserInfo(username)) = &object.click_event {
                         const TWITCH_URL_PREFIX: &str = "https://twitch.tv/";
-                        let mut url = String::with_capacity(TWITCH_URL_PREFIX.len() + username.len());
+                        let mut url =
+                            String::with_capacity(TWITCH_URL_PREFIX.len() + username.len());
                         url.push_str(TWITCH_URL_PREFIX);
                         url.push_str(username);
-                        object.click_event = Some(ChatClickEvent::OpenUrl(url));
+                        object.click_event = Some(ChatClickEvent::OpenUrl(Cow::Owned(url)));
                     }
                 }
                 if version < ProtocolVersion::V1_16 {
@@ -709,28 +753,39 @@ impl Chat {
                         object.color = Some(Color::Reset);
                     }
                 }
-            },
+            }
             Chat::Array(array) => {
                 for chat in array {
                     chat.fix_version(version);
                 }
-            },
+            }
             _ => {}
+        }
+    }
+
+    pub fn into_owned(self) -> Chat<'static> {
+        match self {
+            Chat::Raw(text) => Chat::Raw(Cow::Owned(text.into_owned())),
+            Chat::Array(array) => Chat::Array(array.into_iter().map(Chat::into_owned).collect()),
+            Chat::Object(object) => Chat::Object(object.into_owned())
         }
     }
 }
 
-decode_impl!(Chat, src, version, {
-    serde_json::from_str(&LengthCappedString::<262144>::decode(src, version).await?.0).map_err(|_| Error::Malformed)
+decode_impl!(Chat<'a>, src, version, {
+    serde_json::from_str(&LengthCappedString::<262144>::decode(src, version).await?.0)
+        .map_err(|_| Error::Malformed)
 });
 
-encode_impl!(Chat, self, tgt, version, {
+encode_impl!(Chat<'a>, self, tgt, version, {
     self.fix_version(version);
-    let chat: LengthCappedString<262144> = serde_json::to_string(&self).map_err(|_| Error::Malformed)?.try_into()?;
+    let chat: LengthCappedString<262144> = serde_json::to_string(&self)
+        .map_err(|_| Error::Malformed)?
+        .try_into()?;
     chat.encode(tgt, version).await
 });
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub struct UUID(pub u128);
 
 impl UUID {
@@ -813,32 +868,6 @@ impl Display for UUID {
     }
 }
 
-impl Serialize for UUID {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(unsafe { from_utf8_unchecked(&self.to_ascii_bytes_hyphenated()) })
-    }
-}
-
-struct UUIDVisitor;
-
-impl<'de> Visitor<'de> for UUIDVisitor {
-    type Value = UUID;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str("a UUID")
-    }
-
-    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
-        value.parse().map_err(E::custom)
-    }
-}
-
-impl<'de> Deserialize<'de> for UUID {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_str(UUIDVisitor)
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Position {
     pub x: i32,
@@ -866,17 +895,19 @@ decode_impl!(Position, src, version, {
 });
 
 encode_impl!(Position, self, tgt, version, {
-    if self.x > 33554431 || self.x < -33554432 || self.y > 2047 || self.y < -2048 || self.z > 33554431 || self.z < -33554431 {
+    if self.x > 33554431
+        || self.x < -33554432
+        || self.y > 2047
+        || self.y < -2048
+        || self.z > 33554431
+        || self.z < -33554431
+    {
         Err(Error::Malformed)
     } else {
         let num = if version >= ProtocolVersion::V1_14_4 {
-            ((self.x as u64) << 38)
-            | ((self.z as u64) << 12)
-            | (self.y as u64)
+            ((self.x as u64) << 38) | ((self.z as u64) << 12) | (self.y as u64)
         } else {
-            ((self.x as u64) << 38)
-            | ((self.y as u64) << 26)
-            | (self.z as u64)
+            ((self.x as u64) << 38) | ((self.y as u64) << 26) | (self.z as u64)
         };
         tgt.write_u64(num).await.map_err(handle_io_err)
     }

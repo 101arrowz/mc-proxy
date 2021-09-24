@@ -33,13 +33,12 @@ impl<W: AsyncWrite + Unpin> Encryptor<W> {
         }
     }
 
-    pub fn set_key(&mut self, key: Option<[u8; 16]>) -> Result<(), InvalidLength> {
-        self.cipher = if let Some(key) = key {
-            Some(Encryption::new_from_slices(&key, &key)?)
+    pub fn set_key(&mut self, key: Option<[u8; 16]>) {
+        self.cipher = if let Some(ref key) = key {
+            Some(Encryption::new_from_slices(key, key).unwrap())
         } else {
             None
         };
-        Ok(())
     }
 
     fn flush_buffer(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
@@ -103,13 +102,12 @@ impl<R: AsyncReadExt + Unpin> Decryptor<R> {
         Decryptor { src, cipher: None }
     }
 
-    pub fn set_key(&mut self, key: Option<[u8; 16]>) -> Result<(), InvalidLength> {
-        self.cipher = if let Some(key) = key {
-            Some(Encryption::new_from_slices(&key, &key)?)
+    pub fn set_key(&mut self, key: Option<[u8; 16]>) {
+        self.cipher = if let Some(ref key) = key {
+            Some(Encryption::new_from_slices(key, key).unwrap())
         } else {
             None
         };
-        Ok(())
     }
 }
 

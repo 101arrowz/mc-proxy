@@ -18,10 +18,7 @@ impl<S> Limit<S> {
 
 impl<S> Limit<S> {
     pub fn new(stream: S, limit: usize) -> Limit<S> {
-        Limit {
-            stream,
-            limit,
-        }
+        Limit { stream, limit }
     }
 
     pub fn get_ref(&self) -> &S {

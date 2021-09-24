@@ -15,5 +15,10 @@ async-compression = { version = "0.3", features = ["tokio", "zlib"] }
 cfb8 = "0.7"
 aes = "0.7"
 serde = { version = "1.0", features = ["derive"] }
+serde_with = "1.10"
 serde_json = "1.0"
 base64 = "0.13"
+reqwest = { version = "0.11", default-features = false, features = ["json"] }
+sha-1 = "0.9"
+rand = "0.8"
+rsa = "0.5"

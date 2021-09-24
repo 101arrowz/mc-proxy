@@ -8,13 +8,19 @@ use crate::protocol::{
     version::ProtocolVersion,
 };
 use async_compression::tokio::{bufread::ZlibDecoder, write::ZlibEncoder};
-use std::{cmp::{max, min}, future::Future, io::{Cursor, IoSlice}, pin::Pin, task::{Context, Poll, ready}};
+use std::{
+    cmp::{max, min},
+    future::Future,
+    io::{Cursor, IoSlice},
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
 
 pub struct InboundConnection<R: AsyncReadExt + Unpin> {
-    conn: Decryptor<R>,
-    version: ProtocolVersion,
-    compressed: bool,
+    pub(super) conn: Decryptor<R>,
+    pub(super) version: ProtocolVersion,
+    pub(super) compressed: bool,
 }
 
 pub enum IncomingInnerPacket<R: AsyncReadExt + Unpin> {
@@ -80,15 +86,14 @@ impl<R: AsyncReadExt + Unpin> InboundConnection<R> {
 
 pub enum MaybeZlibVec {
     None,
-    Some(ZlibEncoder<Vec<u8>>)
+    Some(ZlibEncoder<Vec<u8>>),
 }
-
 
 impl MaybeZlibVec {
     fn vec(&self) -> &Vec<u8> {
         match self {
             MaybeZlibVec::None => panic!("unexpected vec()"),
-            MaybeZlibVec::Some(tgt) => tgt.get_ref()
+            MaybeZlibVec::Some(tgt) => tgt.get_ref(),
         }
     }
 }
@@ -101,28 +106,32 @@ impl AsyncWrite for MaybeZlibVec {
     ) -> Poll<Result<usize, io::Error>> {
         match self.get_mut() {
             MaybeZlibVec::None => Poll::Ready(Ok(buf.len())),
-            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_write(cx, buf)
+            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_write(cx, buf),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.get_mut() {
             MaybeZlibVec::None => Poll::Ready(Ok(())),
-            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_flush(cx)
+            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_flush(cx),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.get_mut() {
             MaybeZlibVec::None => Poll::Ready(Ok(())),
-            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_shutdown(cx)
+            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_shutdown(cx),
         }
     }
 
-    fn poll_write_vectored(self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[IoSlice<'_>]) -> Poll<Result<usize, io::Error>> {
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[IoSlice<'_>],
+    ) -> Poll<Result<usize, io::Error>> {
         match self.get_mut() {
             MaybeZlibVec::None => Poll::Ready(Ok(bufs.iter().map(|v| v.len()).sum())),
-            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_write_vectored(cx, bufs)
+            MaybeZlibVec::Some(tgt) => Pin::new(tgt).poll_write_vectored(cx, bufs),
         }
     }
 }
@@ -134,7 +143,7 @@ pub enum OutgoingInnerPacket<W: AsyncWriteExt + Unpin> {
         version: ProtocolVersion,
         len: usize,
         shutting_down: bool,
-        tgt: W
+        tgt: W,
     },
     Compressed {
         vec: Limit<MaybeZlibVec>,
@@ -142,24 +151,32 @@ pub enum OutgoingInnerPacket<W: AsyncWriteExt + Unpin> {
         version: ProtocolVersion,
         len: usize,
         shutting_down: bool,
-        tgt: W
+        tgt: W,
     },
 }
 
 impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
-    async fn new(mut tgt: W, len: Option<usize>, threshold: Option<usize>, version: ProtocolVersion) -> Result<OutgoingInnerPacket<W>, Error> {
+    async fn new(
+        mut tgt: W,
+        len: Option<usize>,
+        threshold: Option<usize>,
+        version: ProtocolVersion,
+    ) -> Result<OutgoingInnerPacket<W>, Error> {
         if let Some(threshold) = threshold {
             if let Some(len) = len {
                 if len > 2097151 {
                     Err(Error::PacketTooBig(len))
                 } else if len > threshold {
                     Ok(OutgoingInnerPacket::Compressed {
-                        vec: Limit::new(MaybeZlibVec::Some(ZlibEncoder::new(Vec::with_capacity(len >> 1))), len),
+                        vec: Limit::new(
+                            MaybeZlibVec::Some(ZlibEncoder::new(Vec::with_capacity(len >> 1))),
+                            len,
+                        ),
                         version,
                         len: 0,
                         cache: Vec::new(),
                         shutting_down: false,
-                        tgt
+                        tgt,
                     })
                 } else {
                     Ok(OutgoingInnerPacket::Compressed {
@@ -168,7 +185,7 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                         len: 0,
                         cache: Vec::with_capacity(len + 1),
                         shutting_down: false,
-                        tgt
+                        tgt,
                     })
                 }
             } else {
@@ -178,7 +195,7 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                     len: 0,
                     cache: Vec::with_capacity(threshold + 1),
                     shutting_down: false,
-                    tgt
+                    tgt,
                 })
             }
         } else {
@@ -195,7 +212,7 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                     version,
                     len: 0,
                     shutting_down: false,
-                    tgt
+                    tgt,
                 })
             }
         }
@@ -205,9 +222,9 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
 type OutgoingPacket<'a, W> = OutgoingInnerPacket<&'a mut Encryptor<W>>;
 
 pub struct OutboundConnection<W: AsyncWriteExt + Unpin> {
-    conn: Encryptor<W>,
-    version: ProtocolVersion,
-    compress_threshold: Option<usize>,
+    pub(super) conn: Encryptor<W>,
+    pub(super) version: ProtocolVersion,
+    pub(super) compress_threshold: Option<usize>,
 }
 
 impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
@@ -218,58 +235,90 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
     ) -> Poll<Result<usize, io::Error>> {
         match self.get_mut() {
             OutgoingInnerPacket::Normal(writer) => Pin::new(writer).poll_write(cx, buf),
-            OutgoingInnerPacket::UnknownLength { vec,  len, shutting_down, .. } => {
+            OutgoingInnerPacket::UnknownLength {
+                vec,
+                len,
+                shutting_down,
+                ..
+            } => {
                 if *shutting_down {
                     Poll::Ready(Ok(0))
                 } else {
                     *len += buf.len();
                     if *len > 2097151 {
-                        Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, Error::PacketTooBig(*len))))
+                        Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            Error::PacketTooBig(*len),
+                        )))
                     } else {
                         Pin::new(vec).poll_write(cx, buf)
                     }
                 }
-            },
-            OutgoingInnerPacket::Compressed { vec, cache, len, shutting_down, .. } => {
-                Poll::Ready(if *shutting_down { Ok(0) } else { match ready!(Pin::new(vec).poll_write(cx, buf)) {
+            }
+            OutgoingInnerPacket::Compressed {
+                vec,
+                cache,
+                len,
+                shutting_down,
+                ..
+            } => Poll::Ready(if *shutting_down {
+                Ok(0)
+            } else {
+                match ready!(Pin::new(vec).poll_write(cx, buf)) {
                     Ok(bytes_written) => {
                         *len += bytes_written;
                         if *len > 2097151 {
-                            Err(io::Error::new(io::ErrorKind::InvalidData, Error::PacketTooBig(*len)))
+                            Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                Error::PacketTooBig(*len),
+                            ))
                         } else {
                             if cache.len() < cache.capacity() {
-                                cache.extend_from_slice(&buf[..min(bytes_written, cache.capacity() - cache.len())]);
+                                cache.extend_from_slice(
+                                    &buf[..min(bytes_written, cache.capacity() - cache.len())],
+                                );
                             }
                             Ok(bytes_written)
                         }
-                    },
-                    Err(err) => Err(err)
-                } })
-            }
+                    }
+                    Err(err) => Err(err),
+                }
+            }),
         }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.get_mut() {
             OutgoingInnerPacket::Normal(writer) => Pin::new(writer).poll_flush(cx),
-            OutgoingInnerPacket::Compressed { vec, shutting_down, .. } => {
+            OutgoingInnerPacket::Compressed {
+                vec, shutting_down, ..
+            } => {
                 if *shutting_down {
                     Poll::Ready(Ok(()))
                 } else {
                     Pin::new(vec).poll_flush(cx)
                 }
-            },
-            _ => Poll::Ready(Ok(()))
+            }
+            _ => Poll::Ready(Ok(())),
         }
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.get_mut() {
             OutgoingInnerPacket::Normal(writer) => Pin::new(writer).poll_shutdown(cx),
-            OutgoingInnerPacket::UnknownLength { vec, version, len, shutting_down, tgt } => {
+            OutgoingInnerPacket::UnknownLength {
+                vec,
+                version,
+                len,
+                shutting_down,
+                tgt,
+            } => {
                 if !*shutting_down {
                     if *len > 2097151 {
-                        return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, Error::PacketTooBig(*len))));
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            Error::PacketTooBig(*len),
+                        )));
                     }
                     let mut encode_buf = [0u8; 5];
                     let mut encode_buf = Cursor::new(encode_buf.as_mut());
@@ -281,7 +330,9 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    if let Err(err) = ready!(Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])) {
+                    if let Err(err) = ready!(
+                        Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])
+                    ) {
                         return Poll::Ready(Err(err));
                     }
                     *shutting_down = true;
@@ -289,15 +340,26 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                 while *len != 0 {
                     match ready!(Pin::new(&mut *tgt).poll_write(cx, &vec[vec.len() - *len..])) {
                         Ok(bytes_written) => *len -= bytes_written,
-                        Err(err) => return Poll::Ready(Err(err))
+                        Err(err) => return Poll::Ready(Err(err)),
                     }
                 }
                 Pin::new(tgt).poll_shutdown(cx)
             }
-            OutgoingInnerPacket::Compressed { vec, cache, version, len, shutting_down, tgt } => {
+            OutgoingInnerPacket::Compressed {
+                vec,
+                cache,
+                version,
+                len,
+                shutting_down,
+                tgt,
+            } => {
                 ready!(Pin::new(&mut *vec).poll_flush(cx))?;
                 let use_cache = cache.len() < cache.capacity();
-                let compressed = if use_cache { cache } else { vec.get_ref().vec() };
+                let compressed = if use_cache {
+                    cache
+                } else {
+                    vec.get_ref().vec()
+                };
                 if !*shutting_down {
                     let uncompressed_len = VarInt(if use_cache {
                         *len = compressed.len();
@@ -309,13 +371,17 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                     // Still works when use_cache == true b/c true_len == *len
                     let max_len = max(*len, true_len);
                     if max_len > 2097151 {
-                        return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, Error::PacketTooBig(max_len))));
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            Error::PacketTooBig(max_len),
+                        )));
                     }
-                    
+
                     let mut encode_buf = [0u8; 10];
                     let mut encode_buf = Cursor::new(encode_buf.as_mut());
                     {
-                        let mut total_len_encode = VarInt(true_len as i32).encode(&mut encode_buf, *version);
+                        let mut total_len_encode =
+                            VarInt(true_len as i32).encode(&mut encode_buf, *version);
                         let total_len_encode = unsafe { Pin::new_unchecked(&mut total_len_encode) };
                         if total_len_encode.poll(cx) == Poll::Pending {
                             unreachable!("VarInt encode on cursor was not immediately ready");
@@ -329,15 +395,19 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    if let Err(err) = ready!(Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])) {
+                    if let Err(err) = ready!(
+                        Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])
+                    ) {
                         return Poll::Ready(Err(err));
                     }
                     *shutting_down = true;
                 }
                 while *len != 0 {
-                    match ready!(Pin::new(&mut *tgt).poll_write(cx, &compressed[compressed.len() - *len..])) {
+                    match ready!(
+                        Pin::new(&mut *tgt).poll_write(cx, &compressed[compressed.len() - *len..])
+                    ) {
                         Ok(bytes_written) => *len -= bytes_written,
-                        Err(err) => return Poll::Ready(Err(err))
+                        Err(err) => return Poll::Ready(Err(err)),
                     }
                 }
                 Pin::new(tgt).poll_shutdown(cx)
@@ -352,14 +422,18 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
     ) -> Poll<Result<usize, io::Error>> {
         match self.get_mut() {
             OutgoingInnerPacket::Normal(writer) => Pin::new(writer).poll_write_vectored(cx, bufs),
-            OutgoingInnerPacket::UnknownLength { vec, shutting_down,.. } => {
+            OutgoingInnerPacket::UnknownLength {
+                vec, shutting_down, ..
+            } => {
                 if *shutting_down {
                     Poll::Ready(Ok(0))
                 } else {
                     Pin::new(vec).poll_write_vectored(cx, bufs)
                 }
-            },
-            OutgoingInnerPacket::Compressed { vec, shutting_down, .. } => {
+            }
+            OutgoingInnerPacket::Compressed {
+                vec, shutting_down, ..
+            } => {
                 if *shutting_down {
                     Poll::Ready(Ok(0))
                 } else {
@@ -385,7 +459,13 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         len: Option<usize>,
     ) -> Result<OutgoingPacket<'_, W>, Error> {
         let id = VarInt(id);
-        let mut packet = OutgoingInnerPacket::new(&mut self.conn, len.map(|s| s + id.len()), self.compress_threshold, self.version).await?;
+        let mut packet = OutgoingInnerPacket::new(
+            &mut self.conn,
+            len.map(|s| s + id.len()),
+            self.compress_threshold,
+            self.version,
+        )
+        .await?;
         id.encode(&mut packet, self.version).await?;
         Ok(packet)
     }
