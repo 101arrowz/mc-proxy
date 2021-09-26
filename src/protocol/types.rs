@@ -1,6 +1,6 @@
 use super::{error::Error, version::ProtocolVersion};
-use serde::{Deserialize, Serialize};
-use serde_with::{SerializeDisplay, DeserializeFromStr, skip_serializing_none};
+use serde::{de, Deserialize, Deserializer, Serialize};
+use serde_with::{skip_serializing_none, DeserializeFromStr, SerializeDisplay};
 use std::{
     borrow::Cow,
     convert::{TryFrom, TryInto},
@@ -372,7 +372,9 @@ impl From<VarLong> for i64 {
 #[derive(Clone, Debug)]
 pub struct LengthCappedString<'a, const L: usize>(pub Cow<'a, str>);
 
-impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> Decode<'a, R> for LengthCappedString<'static, L> {
+impl<'a, R: AsyncReadExt + Unpin + 'a, const L: usize> Decode<'a, R>
+    for LengthCappedString<'static, L>
+{
     decode_inner_impl!('a, R, src, version, {
         let str_len = VarInt::decode(src, version).await?.0 as usize;
         if str_len > (L << 2) {
@@ -434,6 +436,8 @@ impl<'a, const L: usize> Display for LengthCappedString<'a, L> {
         f.write_str(&self.0)
     }
 }
+
+pub type Identifier<'a> = LengthCappedString<'a, 32767>;
 
 const BLACK: &str = "black";
 const DARK_BLUE: &str = "dark_blue";
@@ -576,18 +580,26 @@ pub enum ChatClickEvent<'a> {
     TwitchUserInfo(Cow<'a, str>),
     SuggestCommand(Cow<'a, str>),
     ChangePage(usize),
-    CopyToClipboard(Cow<'a, str>)
+    CopyToClipboard(Cow<'a, str>),
 }
 
 impl<'a> ChatClickEvent<'a> {
     pub fn into_owned(self) -> ChatClickEvent<'static> {
         match self {
             ChatClickEvent::OpenUrl(url) => ChatClickEvent::OpenUrl(Cow::Owned(url.into_owned())),
-            ChatClickEvent::RunCommand(command) => ChatClickEvent::RunCommand(Cow::Owned(command.into_owned())),
-            ChatClickEvent::TwitchUserInfo(username) => ChatClickEvent::TwitchUserInfo(Cow::Owned(username.into_owned())),
-            ChatClickEvent::SuggestCommand(command) => ChatClickEvent::SuggestCommand(Cow::Owned(command.into_owned())),
-            ChatClickEvent::CopyToClipboard(text) => ChatClickEvent::CopyToClipboard(Cow::Owned(text.into_owned())),
-            ChatClickEvent::ChangePage(page) => ChatClickEvent::ChangePage(page)
+            ChatClickEvent::RunCommand(command) => {
+                ChatClickEvent::RunCommand(Cow::Owned(command.into_owned()))
+            }
+            ChatClickEvent::TwitchUserInfo(username) => {
+                ChatClickEvent::TwitchUserInfo(Cow::Owned(username.into_owned()))
+            }
+            ChatClickEvent::SuggestCommand(command) => {
+                ChatClickEvent::SuggestCommand(Cow::Owned(command.into_owned()))
+            }
+            ChatClickEvent::CopyToClipboard(text) => {
+                ChatClickEvent::CopyToClipboard(Cow::Owned(text.into_owned()))
+            }
+            ChatClickEvent::ChangePage(page) => ChatClickEvent::ChangePage(page),
         }
     }
 }
@@ -608,9 +620,15 @@ impl<'a> ChatHoverEvent<'a> {
     pub fn into_owned(self) -> ChatHoverEvent<'static> {
         match self {
             ChatHoverEvent::ShowText(text) => ChatHoverEvent::ShowText(Box::new(text.into_owned())),
-            ChatHoverEvent::ShowItem(item) => ChatHoverEvent::ShowItem(Cow::Owned(item.into_owned())),
-            ChatHoverEvent::ShowEntity(entity) => ChatHoverEvent::ShowEntity(Cow::Owned(entity.into_owned())),
-            ChatHoverEvent::ShowAchievement(achievement) => ChatHoverEvent::ShowAchievement(Cow::Owned(achievement.into_owned()))
+            ChatHoverEvent::ShowItem(item) => {
+                ChatHoverEvent::ShowItem(Cow::Owned(item.into_owned()))
+            }
+            ChatHoverEvent::ShowEntity(entity) => {
+                ChatHoverEvent::ShowEntity(Cow::Owned(entity.into_owned()))
+            }
+            ChatHoverEvent::ShowAchievement(achievement) => {
+                ChatHoverEvent::ShowAchievement(Cow::Owned(achievement.into_owned()))
+            }
         }
     }
 }
@@ -628,7 +646,7 @@ impl<'a> ChatScore<'a> {
         ChatScore {
             name: Cow::Owned(self.name.into_owned()),
             objective: Cow::Owned(self.objective.into_owned()),
-            value: self.value.map(|val| Cow::Owned(val.into_owned()))
+            value: self.value.map(|val| Cow::Owned(val.into_owned())),
         }
     }
 }
@@ -657,11 +675,22 @@ pub enum ChatValue<'a> {
 impl<'a> ChatValue<'a> {
     pub fn into_owned(self) -> ChatValue<'static> {
         match self {
-            ChatValue::Text { text } => ChatValue::Text { text: Cow::Owned(text.into_owned()) },
-            ChatValue::Translate { translate, with } => ChatValue::Translate { translate: Cow::Owned(translate.into_owned()), with: with.into_iter().map(Chat::into_owned).collect() },
-            ChatValue::Score { score } => ChatValue::Score { score: score.into_owned() },
-            ChatValue::Keybind { keybind } => ChatValue::Keybind { keybind: Cow::Owned(keybind.into_owned()) },
-            ChatValue::Selector { selector } => ChatValue::Selector { selector: Cow::Owned(selector.into_owned()) },
+            ChatValue::Text { text } => ChatValue::Text {
+                text: Cow::Owned(text.into_owned()),
+            },
+            ChatValue::Translate { translate, with } => ChatValue::Translate {
+                translate: Cow::Owned(translate.into_owned()),
+                with: with.into_iter().map(Chat::into_owned).collect(),
+            },
+            ChatValue::Score { score } => ChatValue::Score {
+                score: score.into_owned(),
+            },
+            ChatValue::Keybind { keybind } => ChatValue::Keybind {
+                keybind: Cow::Owned(keybind.into_owned()),
+            },
+            ChatValue::Selector { selector } => ChatValue::Selector {
+                selector: Cow::Owned(selector.into_owned()),
+            },
         }
     }
 }
@@ -690,7 +719,9 @@ impl<'a> ChatObject<'a> {
             insertion: self.insertion.map(|val| Cow::Owned(val.into_owned())),
             click_event: self.click_event.map(ChatClickEvent::into_owned),
             hover_event: self.hover_event.map(ChatHoverEvent::into_owned),
-            extra: self.extra.map(|extra| extra.into_iter().map(Chat::into_owned).collect()),
+            extra: self
+                .extra
+                .map(|extra| extra.into_iter().map(Chat::into_owned).collect()),
             value: self.value.into_owned(),
 
             // tried ..self, borrowck complained
@@ -699,7 +730,7 @@ impl<'a> ChatObject<'a> {
             underlined: self.underlined,
             strikethrough: self.strikethrough,
             obfuscated: self.obfuscated,
-            color: self.color
+            color: self.color,
         }
     }
 }
@@ -767,7 +798,7 @@ impl<'a> Chat<'a> {
         match self {
             Chat::Raw(text) => Chat::Raw(Cow::Owned(text.into_owned())),
             Chat::Array(array) => Chat::Array(array.into_iter().map(Chat::into_owned).collect()),
-            Chat::Object(object) => Chat::Object(object.into_owned())
+            Chat::Object(object) => Chat::Object(object.into_owned()),
         }
     }
 }
@@ -785,7 +816,7 @@ encode_impl!(Chat<'a>, self, tgt, version, {
     chat.encode(tgt, version).await
 });
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, SerializeDisplay)]
 pub struct UUID(pub u128);
 
 impl UUID {
@@ -819,6 +850,59 @@ impl UUID {
         }
         buf
     }
+
+    fn from_ascii_bytes(s: &str) -> Result<UUID, Error> {
+        if s.len() == 32 {
+            let mut res = 0u128;
+            for (ind, byte) in s.bytes().enumerate() {
+                res |= ((match byte {
+                    b'0'..=b'9' => byte - b'0',
+                    b'a'..=b'f' => byte - b'a' + 10,
+                    b'A'..=b'F' => byte - b'A' + 10,
+                    _ => return Err(Error::Malformed),
+                }) as u128)
+                    << (ind << 2);
+            }
+            Ok(UUID(res))
+        } else {
+            Err(Error::Malformed)
+        }
+    }
+
+    fn from_ascii_bytes_hyphenated(s: &str) -> Result<UUID, Error> {
+        if s.len() == 36 {
+            let mut res = 0u128;
+            let mut ind = -1;
+            for byte in s.bytes() {
+                res |= ((match byte {
+                    b'0'..=b'9' => {
+                        ind += 1;
+                        byte - b'0'
+                    },
+                    b'a'..=b'f' => {
+                        ind += 1;
+                        byte - b'a' + 10
+                    },
+                    b'A'..=b'F' => {
+                        ind += 1;
+                        byte - b'A' + 10
+                    },
+                    b'-' => {
+                        if ind == 7 || ind == 11 || ind == 15 || ind == 19 {
+                            continue;
+                        } else {
+                            return Err(Error::Malformed);
+                        }
+                    },
+                    _ => return Err(Error::Malformed),
+                }) as u128)
+                    << (ind << 2);
+            }
+            Ok(UUID(res))
+        } else {
+            Err(Error::Malformed)
+        }
+    }
 }
 
 decode_impl!(UUID, src, {
@@ -836,21 +920,61 @@ impl FromStr for UUID {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() == 32 || s.len() == 36 {
-            let mut res = 0u128;
-            for (ind, byte) in s.bytes().filter(|&v| v != b'-').enumerate() {
-                res |= ((match byte {
-                    b'0'..=b'9' => byte - b'0',
-                    b'a'..=b'f' => byte - b'a' + 10,
-                    b'A'..=b'F' => byte - b'A' + 10,
-                    _ => return Err(Error::Malformed),
-                }) as u128)
-                    << (ind << 2);
-            }
-            Ok(UUID(res))
+        if s.len() == 32 {
+            UUID::from_ascii_bytes(s)
+        } else if s.len() == 36 {
+            UUID::from_ascii_bytes_hyphenated(s)
         } else {
             Err(Error::Malformed)
         }
+    }
+}
+
+pub mod serde_raw_uuid {
+    use super::UUID;
+    use std::{str::from_utf8_unchecked, fmt};
+    use serde::{Serializer, Deserializer, de};
+
+    pub fn serialize<S: Serializer>(uuid: &UUID, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(unsafe { from_utf8_unchecked(&uuid.to_ascii_bytes()) })
+    }
+
+    struct RawUUIDVisitor;
+
+    impl<'de> de::Visitor<'de> for RawUUIDVisitor {
+        type Value = UUID;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("an unhyphenated UUID")
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+            UUID::from_ascii_bytes(value).map_err(E::custom)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<UUID, D::Error> {
+        deserializer.deserialize_str(RawUUIDVisitor)
+    }
+}
+
+struct UUIDVisitor;
+
+impl<'de> de::Visitor<'de> for UUIDVisitor {
+    type Value = UUID;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a UUID")
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+        UUID::from_ascii_bytes_hyphenated(value).map_err(E::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for UUID {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<UUID, D::Error> {
+        deserializer.deserialize_str(UUIDVisitor)
     }
 }
 

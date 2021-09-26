@@ -4,6 +4,7 @@ use super::{
     util::Limit,
 };
 use crate::protocol::{
+    error::Error as ProtocolError,
     types::{Decode, Encode, VarInt},
     version::ProtocolVersion,
 };
@@ -25,7 +26,7 @@ pub struct InboundConnection<R: AsyncReadExt + Unpin> {
 
 pub enum IncomingInnerPacket<R: AsyncReadExt + Unpin> {
     Normal(Limit<R>),
-    Decompressed(ZlibDecoder<BufReader<Limit<R>>>),
+    Decompressed(Limit<ZlibDecoder<BufReader<Limit<R>>>>),
 }
 
 impl<R: AsyncReadExt + Unpin> AsyncRead for IncomingInnerPacket<R> {
@@ -37,6 +38,58 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for IncomingInnerPacket<R> {
         match self.get_mut() {
             IncomingInnerPacket::Normal(reader) => Pin::new(reader).poll_read(cx, buf),
             IncomingInnerPacket::Decompressed(reader) => Pin::new(reader).poll_read(cx, buf),
+        }
+    }
+}
+
+impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
+    pub async fn close(&mut self) -> Result<bool, Error> {
+        match self {
+            IncomingInnerPacket::Normal(reader) => {
+                if reader.remaining() == 0 {
+                    Ok(true)
+                } else {
+                    let mut buf = Vec::with_capacity(reader.remaining());
+                    reader.read_to_end(&mut buf).await?;
+                    Ok(false)
+                }
+            }
+            IncomingInnerPacket::Decompressed(reader) => {
+                if reader.remaining() == 0 {
+                    if reader.get_ref().get_ref().get_ref().remaining() == 0 {
+                        Ok(true)
+                    } else {
+                        Err(ProtocolError::Malformed)?
+                    }
+                } else {
+                    let mut buf = Vec::with_capacity(reader.remaining());
+                    reader.read_to_end(&mut buf).await?;
+                    if reader.get_ref().get_ref().get_ref().remaining() == 0 {
+                        Ok(false)
+                    } else {
+                        Err(ProtocolError::Malformed)?
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn finished(&self) -> Result<(), Error> {
+        match self {
+            IncomingInnerPacket::Normal(reader) => {
+                if reader.remaining() == 0 {
+                    Ok(())
+                } else {
+                    Err(Error::IncompletePacket)
+                }
+            },
+            IncomingInnerPacket::Decompressed(reader) => {
+                if reader.remaining() == 0 && reader.get_ref().get_ref().get_ref().remaining() == 0 {
+                    Ok(())
+                } else {
+                    Err(Error::IncompletePacket)
+                }
+            }
         }
     }
 }
@@ -67,14 +120,15 @@ impl<R: AsyncReadExt + Unpin> InboundConnection<R> {
             let mut rest_of_packet = Limit::new(&mut self.conn, len);
             let mut id = VarInt::decode(&mut rest_of_packet, self.version).await?.0;
             let content = if self.compressed {
-                let decompressed_size = id;
+                let decompressed_size = id as usize;
                 id = VarInt::decode(&mut rest_of_packet, self.version).await?.0;
                 if decompressed_size == 0 {
                     IncomingInnerPacket::Normal(rest_of_packet)
                 } else {
-                    IncomingInnerPacket::Decompressed(ZlibDecoder::new(BufReader::new(
-                        rest_of_packet,
-                    )))
+                    IncomingInnerPacket::Decompressed(Limit::new(
+                        ZlibDecoder::new(BufReader::new(rest_of_packet)),
+                        decompressed_size,
+                    ))
                 }
             } else {
                 IncomingInnerPacket::Normal(rest_of_packet)
@@ -151,6 +205,7 @@ pub enum OutgoingInnerPacket<W: AsyncWriteExt + Unpin> {
         version: ProtocolVersion,
         len: usize,
         shutting_down: bool,
+        known_len: bool,
         tgt: W,
     },
 }
@@ -176,6 +231,7 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                         len: 0,
                         cache: Vec::new(),
                         shutting_down: false,
+                        known_len: true,
                         tgt,
                     })
                 } else {
@@ -185,6 +241,7 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                         len: 0,
                         cache: Vec::with_capacity(len + 1),
                         shutting_down: false,
+                        known_len: true,
                         tgt,
                     })
                 }
@@ -195,6 +252,7 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                     len: 0,
                     cache: Vec::with_capacity(threshold + 1),
                     shutting_down: false,
+                    known_len: false,
                     tgt,
                 })
             }
@@ -305,7 +363,16 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.get_mut() {
-            OutgoingInnerPacket::Normal(writer) => Pin::new(writer).poll_shutdown(cx),
+            OutgoingInnerPacket::Normal(writer) => {
+                if writer.remaining() != 0 {
+                    Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        Error::IncompletePacket
+                    )))
+                } else {
+                    Pin::new(writer).poll_shutdown(cx)
+                }
+            },
             OutgoingInnerPacket::UnknownLength {
                 vec,
                 version,
@@ -351,8 +418,15 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                 version,
                 len,
                 shutting_down,
+                known_len,
                 tgt,
             } => {
+                if *known_len && vec.remaining() != 0 {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        Error::IncompletePacket
+                    )));
+                }
                 ready!(Pin::new(&mut *vec).poll_flush(cx))?;
                 let use_cache = cache.len() < cache.capacity();
                 let compressed = if use_cache {

@@ -1,6 +1,4 @@
 #![feature(type_alias_impl_trait)]
-#![feature(generic_associated_types)]
-#![feature(associated_type_defaults)]
 
 mod connection;
 mod protocol;

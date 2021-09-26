@@ -1,7 +1,7 @@
 use crate::protocol::{error::Error as ProtocolError, types::Chat};
+use reqwest::Error as HTTPError;
 use thiserror::Error;
 use tokio::io::Error as IOError;
-use reqwest::Error as HTTPError;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -15,10 +15,14 @@ pub enum Error {
     ProtocolError(#[from] ProtocolError),
     #[error("disconnected")]
     Disconnected(Chat<'static>),
+    #[error("no credentials")]
+    NoCredentials,
     #[error("HTTP error")]
     HTTPError(#[from] HTTPError),
     #[error("packet too big")]
     PacketTooBig(usize),
     #[error("invalid packet size")]
     InvalidPacketSize(i32),
+    #[error("incomplete packet")]
+    IncompletePacket
 }

@@ -7,6 +7,7 @@ use crate::protocol::{
     types::{Decode, Encode, LengthCappedString, UUID},
 };
 
+use serde_with::skip_serializing_none;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -21,6 +22,7 @@ pub struct SamplePlayer<'a> {
     id: UUID,
 }
 
+#[skip_serializing_none]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Players<'a> {
     max: usize,
@@ -28,6 +30,7 @@ pub struct Players<'a> {
     sample: Option<Vec<SamplePlayer<'a>>>,
 }
 
+#[skip_serializing_none]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Status<'a> {
     version: Version<'a>,
@@ -42,6 +45,7 @@ impl Client {
             self.outbound.create_packet(0, Some(0)).await?;
             loop {
                 let mut packet = self.inbound.next_packet().await?;
+                // Compression not enabled, so shutdown unnecessary
                 match packet.id {
                     0 => {
                         let status_str =
@@ -64,6 +68,7 @@ impl Client {
                     }
                     _ => Err(ProtocolError::Malformed)?,
                 }
+                packet.content.finished()?;
             }
         } else {
             Err(Error::InvalidState)
