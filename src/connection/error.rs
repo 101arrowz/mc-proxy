@@ -1,4 +1,5 @@
 use crate::protocol::{error::Error as ProtocolError, types::Chat};
+use crate::web::{error::Error as WebError};
 use reqwest::Error as HTTPError;
 use thiserror::Error;
 use tokio::io::Error as IOError;
@@ -19,6 +20,8 @@ pub enum Error {
     NoCredentials,
     #[error("HTTP error")]
     HTTPError(#[from] HTTPError),
+    #[error("web error")]
+    WebError(#[from] WebError),
     #[error("packet too big")]
     PacketTooBig(usize),
     #[error("invalid packet size")]

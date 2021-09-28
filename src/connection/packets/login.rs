@@ -18,10 +18,10 @@ pub struct LoginCredentials<'a> {
     pub uuid: UUID,
 }
 
-pub trait Authenticator<'a> {
-    type CredentialsOutput: Future<Output = Result<LoginCredentials<'a>, Error>>;
+pub trait Authenticator {
+    type CredentialsOutput<'a>: Future<Output = Result<LoginCredentials<'a>, Error>>;
     fn username(&mut self) -> &str;
-    fn credentials(&mut self) -> Self::CredentialsOutput;
+    fn credentials(&mut self) -> Self::CredentialsOutput<'_>;
 }
 
 #[derive(Debug, Clone)]
@@ -31,7 +31,8 @@ pub struct LoginResponse<'a> {
 }
 
 impl Client {
-    pub async fn login<'a, P: Future<Output = Option<impl AsRef<[u8]>>>>(&mut self, mut client: Option<HTTPClient>, mut authenticator: impl Authenticator<'_>, mut plugin_handler: Option<impl FnMut(Cow<'a, str>, Vec<u8>) -> P>) -> Result<LoginResponse<'_>, Error> {
+    pub const NO_PLUGIN_HANDLER: fn(Cow<str>, Vec<u8>) -> Ready<Option<Vec<u8>>> = |_, _| ready(None);
+    pub async fn login<'a, P: Future<Output = Option<impl AsRef<[u8]>>>>(&mut self, mut client: Option<HTTPClient>, mut authenticator: impl Authenticator, mut plugin_handler: impl FnMut(Cow<'a, str>, Vec<u8>) -> P) -> Result<LoginResponse<'_>, Error> {
         if self.state == State::Login {
             let username = authenticator.username();
             let start_packet_len = username.len() + 1;
@@ -61,6 +62,14 @@ impl Client {
                         hasher.update(shared_secret);
                         hasher.update(&public_key_bytes);
                         let output = hasher.finalize();
+                        let mut output_hex = [0; 40];
+                        for i in 0..20 {
+                            let byte = output[i];
+                            let hex_a = byte >> 4;
+                            output_hex[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'A' - 10 });
+                            let hex_b = byte & 15;
+                            output_hex[(i << 1) + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'A' - 10 });
+                        }
 
                         let credentials = authenticator.credentials().await?;
 
@@ -73,11 +82,11 @@ impl Client {
                             server_id: &'a str
                         }
 
-                        client.take().unwrap_or_else(HTTPClient::new).post("https://sessionserver.mojang.com/session/minecraft/join")
+                        client.take().unwrap_or_default().post("https://sessionserver.mojang.com/session/minecraft/join")
                             .json(&FullLoginCredentials {
                                 access_token: credentials.access_token,
                                 uuid: credentials.uuid,
-                                server_id: std::str::from_utf8(&output).unwrap()
+                                server_id: std::str::from_utf8(&output_hex).unwrap()
                             })
                             .send()
                             .await?
@@ -123,33 +132,23 @@ impl Client {
                     },
                     4 => {
                         let message_id = VarInt::decode(&mut packet.content, self.version).await?;
-                        if let Some(ref mut plugin_handler) = plugin_handler {
-                            let channel = Identifier::decode(&mut packet.content, self.version).await?.0;
-                            let bytes_remaining = packet.len - message_id.len() - channel.len() - VarInt(channel.len() as i32).len();
-                            let mut buf = Vec::with_capacity(bytes_remaining);
-                            packet.content.read_to_end(&mut buf).await?;
-                            if buf.len() != bytes_remaining {
-                                Err(ProtocolError::Malformed)?
-                            }
-                            if let Some(response_data) = plugin_handler(channel, buf).await {
-                                let response_data = response_data.as_ref();
-                                let mut response_packet = self.outbound.create_packet(2, Some(
-                                    message_id.len() + 1 + response_data.len()
-                                )).await?;
-                                message_id.encode(&mut response_packet, self.version).await?;
-                                (true).encode(&mut response_packet, self.version).await?;
-                                response_packet.write_all(response_data).await?;
-                                response_packet.shutdown().await?;
-                            } else {
-                                let mut response_packet = self.outbound.create_packet(2, Some(
-                                    message_id.len() + 1
-                                )).await?;
-                                message_id.encode(&mut response_packet, self.version).await?;
-                                (false).encode(&mut response_packet, self.version).await?;
-                                response_packet.shutdown().await?;
-                            }
+                        let channel = Identifier::decode(&mut packet.content, self.version).await?.0;
+                        let bytes_remaining = packet.len - message_id.len() - channel.len() - VarInt(channel.len() as i32).len();
+                        let mut buf = Vec::with_capacity(bytes_remaining);
+                        packet.content.read_to_end(&mut buf).await?;
+                        if buf.len() != bytes_remaining {
+                            Err(ProtocolError::Malformed)?
+                        }
+                        if let Some(response_data) = plugin_handler(channel, buf).await {
+                            let response_data = response_data.as_ref();
+                            let mut response_packet = self.outbound.create_packet(2, Some(
+                                message_id.len() + 1 + response_data.len()
+                            )).await?;
+                            message_id.encode(&mut response_packet, self.version).await?;
+                            (true).encode(&mut response_packet, self.version).await?;
+                            response_packet.write_all(response_data).await?;
+                            response_packet.shutdown().await?;
                         } else {
-                            packet.content.close().await?;
                             let mut response_packet = self.outbound.create_packet(2, Some(
                                 message_id.len() + 1
                             )).await?;
@@ -169,48 +168,14 @@ impl Client {
 
 pub struct OfflineMode<'a>(pub &'a str);
 
-impl<'a> Authenticator<'a> for OfflineMode<'a> {
-    type CredentialsOutput = Ready<Result<LoginCredentials<'a>, Error>>;
+impl Authenticator for OfflineMode<'_> {
+    type CredentialsOutput<'a> = Ready<Result<LoginCredentials<'a>, Error>>;
 
     fn username(&mut self) -> &str {
         self.0
     }
 
-    fn credentials(&mut self) -> Self::CredentialsOutput {
+    fn credentials(&mut self) -> Self::CredentialsOutput<'_> {
         ready(Err(Error::NoCredentials))
-    }
-}
-
-pub struct OnlineMode<'a> {
-    pub username: &'a str,
-    pub password: &'a str,
-    pub client: Option<HTTPClient>,
-    pub client_token: Option<&'a str>
-} 
-
-impl<'a> Authenticator<'a> for OnlineMode<'a> {
-    type CredentialsOutput = impl Future<Output = Result<LoginCredentials<'a>, Error>>;
-
-    fn username(&mut self) -> &str {
-        self.username
-    }
-
-    fn credentials(&mut self) -> Self::CredentialsOutput {
-        if self.client.is_none() {
-            self.client = Some(HTTPClient::new());
-        }
-        let client = self.client.clone().unwrap();
-        async {
-            struct AuthenticationRequest {
-
-            }
-            struct AuthenticationResponse {
-                
-            }
-            client.post("https://authserver.mojang.com/authenticate")
-                .json()
-            Err(Error::IncompletePacket)
-
-        }
     }
 }

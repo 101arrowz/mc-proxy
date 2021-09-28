@@ -1,7 +1,7 @@
 pub mod codec;
 mod encryption;
 pub mod error;
-mod packets;
+pub mod packets;
 mod util;
 
 use tokio::net::{

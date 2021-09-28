@@ -43,7 +43,7 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for Limit<R> {
     }
 }
 
-impl<'a, W: AsyncWriteExt + Unpin> AsyncWrite for Limit<W> {
+impl<W: AsyncWriteExt + Unpin> AsyncWrite for Limit<W> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

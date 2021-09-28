@@ -1,6 +1,6 @@
 use super::{error::Error, version::ProtocolVersion};
-use serde::{de, Deserialize, Deserializer, Serialize};
-use serde_with::{skip_serializing_none, DeserializeFromStr, SerializeDisplay};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde_with::{skip_serializing_none, DeserializeFromStr};
 use std::{
     borrow::Cow,
     convert::{TryFrom, TryInto},
@@ -407,7 +407,7 @@ impl<'a, W: AsyncWriteExt + Unpin + 'a, const L: usize> Encode<'a, W>
     });
 }
 
-impl<'a, const L: usize> TryFrom<String> for LengthCappedString<'a, L> {
+impl<const L: usize> TryFrom<String> for LengthCappedString<'_, L> {
     type Error = Error;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
@@ -431,7 +431,7 @@ impl<'a, const L: usize> TryFrom<&'a str> for LengthCappedString<'a, L> {
     }
 }
 
-impl<'a, const L: usize> Display for LengthCappedString<'a, L> {
+impl<const L: usize> Display for LengthCappedString<'_, L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -457,7 +457,7 @@ const YELLOW: &str = "yellow";
 const WHITE: &str = "white";
 const RESET: &str = "reset";
 
-#[derive(Clone, Debug, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
+#[derive(Clone, Debug, PartialEq, Eq, DeserializeFromStr)]
 pub enum Color {
     Black,
     DarkBlue,
@@ -565,6 +565,13 @@ impl From<&Color> for Cow<'_, str> {
     }
 }
 
+impl Serialize for Color {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let repr: Cow<'_, str> = self.into();
+        serializer.serialize_str(&repr)
+    }
+}
+
 impl Display for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let repr: Cow<'_, str> = self.into();
@@ -583,7 +590,7 @@ pub enum ChatClickEvent<'a> {
     CopyToClipboard(Cow<'a, str>),
 }
 
-impl<'a> ChatClickEvent<'a> {
+impl ChatClickEvent<'_> {
     pub fn into_owned(self) -> ChatClickEvent<'static> {
         match self {
             ChatClickEvent::OpenUrl(url) => ChatClickEvent::OpenUrl(Cow::Owned(url.into_owned())),
@@ -616,7 +623,7 @@ pub enum ChatHoverEvent<'a> {
     ShowAchievement(Cow<'a, str>),
 }
 
-impl<'a> ChatHoverEvent<'a> {
+impl ChatHoverEvent<'_> {
     pub fn into_owned(self) -> ChatHoverEvent<'static> {
         match self {
             ChatHoverEvent::ShowText(text) => ChatHoverEvent::ShowText(Box::new(text.into_owned())),
@@ -641,7 +648,7 @@ pub struct ChatScore<'a> {
     value: Option<Cow<'a, str>>,
 }
 
-impl<'a> ChatScore<'a> {
+impl ChatScore<'_> {
     pub fn into_owned(self) -> ChatScore<'static> {
         ChatScore {
             name: Cow::Owned(self.name.into_owned()),
@@ -672,7 +679,7 @@ pub enum ChatValue<'a> {
     },
 }
 
-impl<'a> ChatValue<'a> {
+impl ChatValue<'_> {
     pub fn into_owned(self) -> ChatValue<'static> {
         match self {
             ChatValue::Text { text } => ChatValue::Text {
@@ -713,7 +720,7 @@ pub struct ChatObject<'a> {
     value: ChatValue<'a>,
 }
 
-impl<'a> ChatObject<'a> {
+impl ChatObject<'_> {
     pub fn into_owned(self) -> ChatObject<'static> {
         ChatObject {
             insertion: self.insertion.map(|val| Cow::Owned(val.into_owned())),
@@ -743,7 +750,7 @@ pub enum Chat<'a> {
     Object(ChatObject<'a>),
 }
 
-impl<'a> Chat<'a> {
+impl Chat<'_> {
     // Note: version fix cannot be undone, i.e. roundtrip is lossy
     fn fix_version(&mut self, version: ProtocolVersion) {
         match self {
@@ -816,7 +823,7 @@ encode_impl!(Chat<'a>, self, tgt, version, {
     chat.encode(tgt, version).await
 });
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, SerializeDisplay)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct UUID(pub u128);
 
 impl UUID {
@@ -955,6 +962,12 @@ pub mod serde_raw_uuid {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<UUID, D::Error> {
         deserializer.deserialize_str(RawUUIDVisitor)
+    }
+}
+
+impl Serialize for UUID {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(unsafe { from_utf8_unchecked(&self.to_ascii_bytes_hyphenated()) })
     }
 }
 
