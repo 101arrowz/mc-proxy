@@ -4,10 +4,10 @@ use crate::protocol::{
     version::ProtocolVersion,
     error::Error as ProtocolError
 };
-use std::{borrow::Cow, convert::TryInto, future::{Future, Ready, ready}, io::Cursor};
+use std::{borrow::Cow, str::from_utf8_unchecked, future::{Future, Ready, ready}, io::Cursor};
 use sha1::{Sha1, Digest};
 use rand::{thread_rng, Rng};
-use rsa::{PublicKey, RsaPublicKey, PaddingScheme, pkcs1::FromRsaPublicKey};
+use rsa::{PublicKey, RsaPublicKey, PaddingScheme, pkcs8::{SubjectPublicKeyInfo, ObjectIdentifier}, pkcs1::{FromRsaPublicKey, der::Decodable}};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use reqwest::Client as HTTPClient;
 use serde::{Serialize, Deserialize};
@@ -53,7 +53,6 @@ impl Client {
                         let mut verify_token = vec![0; VarInt::decode(&mut packet.content, self.version).await?.0 as usize];
                         packet.content.read_exact(&mut verify_token).await?;
                         packet.content.finished()?;
-
                         let mut hasher = Sha1::new();
                         let mut rng = thread_rng();
                         let mut shared_secret = [0; 16];
@@ -61,16 +60,39 @@ impl Client {
                         hasher.update(server_id.0.as_bytes());
                         hasher.update(shared_secret);
                         hasher.update(&public_key_bytes);
-                        let output = hasher.finalize();
-                        let mut output_hex = [0; 40];
-                        for i in 0..20 {
-                            let byte = output[i];
-                            let hex_a = byte >> 4;
-                            output_hex[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'A' - 10 });
-                            let hex_b = byte & 15;
-                            output_hex[(i << 1) + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'A' - 10 });
+                        let mut server_id_raw = hasher.finalize();
+                        let server_id_neg = server_id_raw[0] > 127;
+                        if server_id_neg {
+                            for val in server_id_raw.iter_mut() {
+                                *val ^= 0xFF;
+                            }
+                            for val in server_id_raw.iter_mut().rev() {
+                                if *val == 0xFF {
+                                    *val = 0;
+                                } else {
+                                    *val += 1;
+                                    break;
+                                }
+                            }
                         }
-
+                        let mut server_id = [0; 41];
+                        let server_id_index_start: usize;
+                        let mut output_iter = server_id_raw.iter().flat_map(|&v| [v >> 4, v & 15]).enumerate();
+                        if let Some((first_nonzero, first_nonzero_val)) = output_iter.find(|&(_, v)| v != 0) {
+                            for (i, hex) in output_iter {
+                                server_id[i + 1] = hex + (if hex < 10 { b'0' } else { b'a' - 10 });
+                            }
+                            server_id[first_nonzero + 1] = first_nonzero_val + (if first_nonzero_val < 10 { b'0' } else { b'a' - 10 });
+                            if server_id_neg {
+                                server_id_index_start = first_nonzero;
+                                server_id[server_id_index_start] = b'-';
+                            } else {
+                                server_id_index_start = first_nonzero + 1;
+                            }
+                        } else {
+                            server_id_index_start = 40;
+                            server_id[40] = b'0';
+                        }
                         let credentials = authenticator.credentials().await?;
 
                         #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,21 +100,26 @@ impl Client {
                         struct FullLoginCredentials<'a> {
                             access_token: &'a str,
                             #[serde(with = "serde_raw_uuid")]
-                            uuid: UUID,
+                            selected_profile: UUID,
                             server_id: &'a str
                         }
 
                         client.take().unwrap_or_default().post("https://sessionserver.mojang.com/session/minecraft/join")
                             .json(&FullLoginCredentials {
                                 access_token: credentials.access_token,
-                                uuid: credentials.uuid,
-                                server_id: std::str::from_utf8(&output_hex).unwrap()
+                                selected_profile: credentials.uuid,
+                                server_id: unsafe { from_utf8_unchecked(&server_id[server_id_index_start..]) }
                             })
                             .send()
                             .await?
                             .error_for_status()?;
 
-                        let public_key = RsaPublicKey::from_pkcs1_der(&public_key_bytes).map_err(|_| ProtocolError::Malformed)?;
+                        let spki = SubjectPublicKeyInfo::from_der(&public_key_bytes).map_err(|_| ProtocolError::Malformed)?;
+                        const RSA_OID: ObjectIdentifier = ObjectIdentifier::new("1.2.840.113549.1.1.1");
+                        if spki.algorithm.oid != RSA_OID {
+                            Err(ProtocolError::Malformed)?;
+                        }
+                        let public_key = RsaPublicKey::from_pkcs1_der(spki.subject_public_key).map_err(|_| ProtocolError::Malformed)?;
                         let encrypted_shared_secret = public_key.encrypt(&mut rng, PaddingScheme::PKCS1v15Encrypt, &shared_secret).map_err(|_| ProtocolError::Malformed)?;
                         let encrypted_verify_token = public_key.encrypt(&mut rng, PaddingScheme::PKCS1v15Encrypt, &verify_token).map_err(|_| ProtocolError::Malformed)?;
 
@@ -117,7 +144,11 @@ impl Client {
                     },
                     2 => {
                         let response = LoginResponse {
-                            uuid: UUID::decode(&mut packet.content, self.version).await?,
+                            uuid: if self.version < ProtocolVersion::V1_16 {
+                                LengthCappedString::<36>::decode(&mut packet.content, self.version).await?.0.parse()?
+                            } else {
+                                UUID::decode(&mut packet.content, self.version).await?
+                            },
                             username: LengthCappedString::<16>::decode(&mut packet.content, self.version).await?.0
                         };
                         packet.content.finished()?;

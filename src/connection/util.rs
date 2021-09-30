@@ -1,7 +1,7 @@
 use std::{
     cmp::min,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
@@ -35,10 +35,16 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for Limit<R> {
         if self.limit == 0 {
             Poll::Ready(Ok(()))
         } else {
-            let start_filled_len = buf.filled().len();
-            Pin::new(&mut self.stream).poll_read(cx, buf).map_ok(|_| {
-                self.limit -= buf.filled().len() - start_filled_len;
-            })
+            let mut capped_buf = buf.take(self.limit);
+            ready!(Pin::new(&mut self.stream).poll_read(cx, &mut capped_buf))?;
+            let bytes_read = capped_buf.filled().len();
+            self.limit -= bytes_read;
+            let init_len = capped_buf.initialized().len();
+            unsafe { buf.assume_init(init_len) }
+            buf.set_filled(buf.filled().len() + bytes_read);
+            buf.filled();
+            buf.initialized();
+            Poll::Ready(Ok(()))
         }
     }
 }
@@ -67,9 +73,9 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for Limit<W> {
     }
 
     fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        Pin::new(&mut self.stream).poll_shutdown(cx)
+        Poll::Ready(Ok(()))
     }
 }

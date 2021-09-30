@@ -12,9 +12,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn handle_io_err(err: std::io::Error) -> Error {
     match err.kind() {
-        std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-        std::io::ErrorKind::WriteZero => Error::NeedMore,
-        _ => todo!(),
+        // std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
+        // std::io::ErrorKind::WriteZero => Error::NeedMore,
+        _ => panic!("{:?}", err),
     }
 }
 
@@ -832,9 +832,9 @@ impl UUID {
         for i in 0..16 {
             let byte = (self.0 >> (i << 3)) as u8;
             let hex_a = byte & 15;
-            buf[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'A' - 10 });
+            buf[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'a' - 10 });
             let hex_b = byte >> 4;
-            buf[(i << 1) + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'A' - 10 });
+            buf[(i << 1) + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'a' - 10 });
         }
         buf
     }
@@ -851,9 +851,9 @@ impl UUID {
                 _ => (i << 1) + 4,
             };
             let hex_a = byte & 15;
-            buf[index] = hex_a + (if hex_a < 10 { b'0' } else { b'A' - 10 });
+            buf[index] = hex_a + (if hex_a < 10 { b'0' } else { b'a' - 10 });
             let hex_b = byte >> 4;
-            buf[index + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'A' - 10 });
+            buf[index + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'a' - 10 });
         }
         buf
     }
@@ -865,7 +865,6 @@ impl UUID {
                 res |= ((match byte {
                     b'0'..=b'9' => byte - b'0',
                     b'a'..=b'f' => byte - b'a' + 10,
-                    b'A'..=b'F' => byte - b'A' + 10,
                     _ => return Err(Error::Malformed),
                 }) as u128)
                     << (ind << 2);
@@ -889,10 +888,6 @@ impl UUID {
                     b'a'..=b'f' => {
                         ind += 1;
                         byte - b'a' + 10
-                    },
-                    b'A'..=b'F' => {
-                        ind += 1;
-                        byte - b'A' + 10
                     },
                     b'-' => {
                         if ind == 7 || ind == 11 || ind == 15 || ind == 19 {

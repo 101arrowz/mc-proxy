@@ -13,11 +13,6 @@ use connection::{Client, State};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let mut client = Client::connect("mc.hypixel.net", ProtocolVersion::V1_8_9).await?;
-        client.handshake(State::Status).await?;
-        dbg!(client.status().await?);
-    }
-    {
-        let mut client = Client::connect("mc.hypixel.net", ProtocolVersion::V1_8_9).await?;
         client.handshake(State::Login).await?;
         let web_client = reqwest::Client::new();
         let mut auth = web::yggdrasil::Authentication::new(Some("my_client_name"), None, Some(web_client.clone()));

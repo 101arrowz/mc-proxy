@@ -35,6 +35,10 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for IncomingInnerPacket<R> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
+        // match &*self {
+        //     IncomingInnerPacket::Normal(reader) => dbg!(reader.remaining()),
+        //     IncomingInnerPacket::Decompressed(reader) => dbg!(reader.remaining())
+        // };
         match self.get_mut() {
             IncomingInnerPacket::Normal(reader) => Pin::new(reader).poll_read(cx, buf),
             IncomingInnerPacket::Decompressed(reader) => Pin::new(reader).poll_read(cx, buf),
@@ -116,21 +120,29 @@ impl<R: AsyncReadExt + Unpin> InboundConnection<R> {
         } else if len < 0 {
             Err(Error::InvalidPacketSize(len))
         } else {
-            let len = len as usize;
+            let mut len = len as usize;
             let mut rest_of_packet = Limit::new(&mut self.conn, len);
-            let mut id = VarInt::decode(&mut rest_of_packet, self.version).await?.0;
+            let id_varint = VarInt::decode(&mut rest_of_packet, self.version).await?;
+            let mut id = id_varint.0;
             let content = if self.compressed {
                 let decompressed_size = id as usize;
-                id = VarInt::decode(&mut rest_of_packet, self.version).await?.0;
-                if decompressed_size == 0 {
+                let mut inner_packet = if decompressed_size == 0 {
+                    // id_varint necessarily was 0
+                    len -= 1;
                     IncomingInnerPacket::Normal(rest_of_packet)
                 } else {
+                    len = decompressed_size;
                     IncomingInnerPacket::Decompressed(Limit::new(
                         ZlibDecoder::new(BufReader::new(rest_of_packet)),
                         decompressed_size,
                     ))
-                }
+                };
+                let id_varint = VarInt::decode(&mut inner_packet, self.version).await?;
+                id = id_varint.0;
+                len -= id_varint.len();
+                inner_packet
             } else {
+                len -= id_varint.len();
                 IncomingInnerPacket::Normal(rest_of_packet)
             };
             Ok(IncomingPacket { len, id, content })
