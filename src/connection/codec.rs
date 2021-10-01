@@ -16,7 +16,7 @@ use std::{
     pin::Pin,
     task::{ready, Context, Poll},
 };
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::{pin, io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf}};
 
 pub struct InboundConnection<R: AsyncReadExt + Unpin> {
     pub(super) conn: Decryptor<R>,
@@ -35,10 +35,6 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for IncomingInnerPacket<R> {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        // match &*self {
-        //     IncomingInnerPacket::Normal(reader) => dbg!(reader.remaining()),
-        //     IncomingInnerPacket::Decompressed(reader) => dbg!(reader.remaining())
-        // };
         match self.get_mut() {
             IncomingInnerPacket::Normal(reader) => Pin::new(reader).poll_read(cx, buf),
             IncomingInnerPacket::Decompressed(reader) => Pin::new(reader).poll_read(cx, buf),
@@ -86,9 +82,10 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                 } else {
                     Err(Error::IncompletePacket)
                 }
-            },
+            }
             IncomingInnerPacket::Decompressed(reader) => {
-                if reader.remaining() == 0 && reader.get_ref().get_ref().get_ref().remaining() == 0 {
+                if reader.remaining() == 0 && reader.get_ref().get_ref().get_ref().remaining() == 0
+                {
                     Ok(())
                 } else {
                     Err(Error::IncompletePacket)
@@ -289,7 +286,7 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
     }
 }
 
-type OutgoingPacket<'a, W> = OutgoingInnerPacket<&'a mut Encryptor<W>>;
+pub type OutgoingPacket<'a, W> = OutgoingInnerPacket<&'a mut Encryptor<W>>;
 
 pub struct OutboundConnection<W: AsyncWriteExt + Unpin> {
     pub(super) conn: Encryptor<W>,
@@ -379,12 +376,12 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                 if writer.remaining() != 0 {
                     Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::Other,
-                        Error::IncompletePacket
+                        Error::IncompletePacket,
                     )))
                 } else {
                     Pin::new(writer).poll_shutdown(cx)
                 }
-            },
+            }
             OutgoingInnerPacket::UnknownLength {
                 vec,
                 version,
@@ -402,18 +399,16 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                     let mut encode_buf = [0u8; 5];
                     let mut encode_buf = Cursor::new(encode_buf.as_mut());
                     {
-                        let mut len_encode = VarInt(*len as i32).encode(&mut encode_buf, *version);
-                        let len_encode = unsafe { Pin::new_unchecked(&mut len_encode) };
+                        let len_encode = VarInt(*len as i32).encode(&mut encode_buf, *version);
+                        pin!(len_encode);
                         if len_encode.poll(cx) == Poll::Pending {
                             unreachable!("VarInt encode on cursor was not immediately ready");
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    if let Err(err) = ready!(
+                    ready!(
                         Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])
-                    ) {
-                        return Poll::Ready(Err(err));
-                    }
+                    )?;
                     *shutting_down = true;
                 }
                 while *len != 0 {
@@ -436,7 +431,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                 if *known_len && vec.remaining() != 0 {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::Other,
-                        Error::IncompletePacket
+                        Error::IncompletePacket,
                     )));
                 }
                 ready!(Pin::new(&mut *vec).poll_flush(cx))?;
@@ -468,24 +463,22 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                     {
                         let mut total_len_encode =
                             VarInt(true_len as i32).encode(&mut encode_buf, *version);
-                        let total_len_encode = unsafe { Pin::new_unchecked(&mut total_len_encode) };
-                        if total_len_encode.poll(cx) == Poll::Pending {
+                            pin!(total_len_encode);
+                            if total_len_encode.poll(cx) == Poll::Pending {
                             unreachable!("VarInt encode on cursor was not immediately ready");
                         }
                     }
                     {
                         let mut len_encode = uncompressed_len.encode(&mut encode_buf, *version);
-                        let len_encode = unsafe { Pin::new_unchecked(&mut len_encode) };
+                        pin!(len_encode);
                         if len_encode.poll(cx) == Poll::Pending {
                             unreachable!("VarInt encode on cursor was not immediately ready");
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    if let Err(err) = ready!(
+                    ready!(
                         Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])
-                    ) {
-                        return Poll::Ready(Err(err));
-                    }
+                    )?;
                     *shutting_down = true;
                 }
                 while *len != 0 {
@@ -554,5 +547,9 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         .await?;
         id.encode(&mut packet, self.version).await?;
         Ok(packet)
+    }
+
+    pub async fn shutdown(&mut self) -> Result<(), Error> {
+        Ok(self.conn.shutdown().await?)
     }
 }

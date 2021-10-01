@@ -1,6 +1,6 @@
+use super::yggdrasil::Error as YggdrasilError;
 use reqwest::Error as HTTPError;
 use thiserror::Error;
-use super::yggdrasil::Error as YggdrasilError;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -9,5 +9,5 @@ pub enum Error {
     #[error("Yggdrasil error")]
     YggdrasilError(#[from] YggdrasilError),
     #[error("no access token")]
-    NoAccessToken
+    NoAccessToken,
 }

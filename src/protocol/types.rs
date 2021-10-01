@@ -1,5 +1,5 @@
 use super::{error::Error, version::ProtocolVersion};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::{skip_serializing_none, DeserializeFromStr};
 use std::{
     borrow::Cow,
@@ -827,7 +827,7 @@ encode_impl!(Chat<'a>, self, tgt, version, {
 pub struct UUID(pub u128);
 
 impl UUID {
-    fn to_ascii_bytes(&self) -> [u8; 32] {
+    pub fn to_ascii_bytes(&self) -> [u8; 32] {
         let mut buf = [0; 32];
         for i in 0..16 {
             let byte = (self.0 >> (i << 3)) as u8;
@@ -839,7 +839,7 @@ impl UUID {
         buf
     }
 
-    fn to_ascii_bytes_hyphenated(&self) -> [u8; 36] {
+    pub fn to_ascii_bytes_hyphenated(&self) -> [u8; 36] {
         let mut buf = [b'-'; 36];
         for i in 0..16 {
             let byte = (self.0 >> (i << 3)) as u8;
@@ -858,7 +858,7 @@ impl UUID {
         buf
     }
 
-    fn from_ascii_bytes(s: &str) -> Result<UUID, Error> {
+    pub fn from_ascii_bytes(s: &str) -> Result<UUID, Error> {
         if s.len() == 32 {
             let mut res = 0u128;
             for (ind, byte) in s.bytes().enumerate() {
@@ -875,7 +875,7 @@ impl UUID {
         }
     }
 
-    fn from_ascii_bytes_hyphenated(s: &str) -> Result<UUID, Error> {
+    pub fn from_ascii_bytes_hyphenated(s: &str) -> Result<UUID, Error> {
         if s.len() == 36 {
             let mut res = 0u128;
             let mut ind = -1;
@@ -884,18 +884,18 @@ impl UUID {
                     b'0'..=b'9' => {
                         ind += 1;
                         byte - b'0'
-                    },
+                    }
                     b'a'..=b'f' => {
                         ind += 1;
                         byte - b'a' + 10
-                    },
+                    }
                     b'-' => {
                         if ind == 7 || ind == 11 || ind == 15 || ind == 19 {
                             continue;
                         } else {
                             return Err(Error::Malformed);
                         }
-                    },
+                    }
                     _ => return Err(Error::Malformed),
                 }) as u128)
                     << (ind << 2);
@@ -934,8 +934,8 @@ impl FromStr for UUID {
 
 pub mod serde_raw_uuid {
     use super::UUID;
-    use std::{str::from_utf8_unchecked, fmt};
-    use serde::{Serializer, Deserializer, de};
+    use serde::{de, Deserializer, Serializer};
+    use std::{fmt, str::from_utf8_unchecked};
 
     pub fn serialize<S: Serializer>(uuid: &UUID, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(unsafe { from_utf8_unchecked(&uuid.to_ascii_bytes()) })

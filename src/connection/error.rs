@@ -1,5 +1,5 @@
 use crate::protocol::{error::Error as ProtocolError, types::Chat};
-use crate::web::{error::Error as WebError};
+use crate::web::error::Error as WebError;
 use reqwest::Error as HTTPError;
 use thiserror::Error;
 use tokio::io::Error as IOError;
@@ -27,5 +27,5 @@ pub enum Error {
     #[error("invalid packet size")]
     InvalidPacketSize(i32),
     #[error("incomplete packet")]
-    IncompletePacket
+    IncompletePacket,
 }

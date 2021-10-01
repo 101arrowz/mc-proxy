@@ -1,5 +1,8 @@
-use crate::connection::{error::Error, Client, State};
-use crate::protocol::types::{Encode, LengthCappedString, VarInt};
+use crate::connection::{error::Error, Client, ServerConnection, State};
+use crate::protocol::{
+    error::Error as ProtocolError,
+    types::{Decode, Encode, LengthCappedString, VarInt},
+};
 use std::{convert::TryInto, io::Cursor};
 use tokio::io::AsyncWriteExt;
 
@@ -26,6 +29,35 @@ impl Client {
                 .await?
                 .write_all(&packet.get_ref()[..len])
                 .await?;
+            self.state = next_state;
+            Ok(())
+        } else {
+            Err(Error::InvalidState)
+        }
+    }
+}
+
+impl ServerConnection {
+    pub async fn accept_handshake(&mut self) -> Result<(), Error> {
+        if self.state == State::Handshaking {
+            let mut packet = self.inbound.next_packet().await?;
+            if packet.id != 0 {
+                Err(ProtocolError::Malformed)?;
+            }
+            self.version = VarInt::decode(&mut packet.content, self.version)
+                .await?
+                .0
+                .try_into()?;
+            let _host = LengthCappedString::<256>::decode(&mut packet.content, self.version)
+                .await?
+                .0;
+            let _port = u16::decode(&mut packet.content, self.version).await?;
+            let next_state = match VarInt::decode(&mut packet.content, self.version).await?.0 {
+                1 => State::Status,
+                2 => State::Login,
+                _ => Err(ProtocolError::Malformed)?,
+            };
+            packet.content.finished()?;
             self.state = next_state;
             Ok(())
         } else {

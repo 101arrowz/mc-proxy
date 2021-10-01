@@ -4,9 +4,18 @@ pub mod error;
 pub mod packets;
 mod util;
 
-use tokio::net::{
-    tcp::{OwnedReadHalf, OwnedWriteHalf},
-    TcpStream,
+use std::{
+    convert::Infallible,
+    future::{ready, Future, Ready},
+    net::SocketAddr,
+};
+
+use tokio::{
+    io::AsyncWriteExt,
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpListener, TcpStream,
+    },
 };
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},
@@ -68,5 +77,25 @@ impl Client {
             port,
             version,
         })
+    }
+}
+
+pub struct ServerConnection {
+    outbound: OutboundConnection<OwnedWriteHalf>,
+    inbound: InboundConnection<OwnedReadHalf>,
+    state: State,
+    version: ProtocolVersion,
+}
+
+impl ServerConnection {
+    pub async fn new(conn: TcpStream) -> ServerConnection {
+        const INIT_VERSION: ProtocolVersion = ProtocolVersion::V1_16;
+        let (read_half, write_half) = conn.into_split();
+        ServerConnection {
+            outbound: OutboundConnection::new(write_half, INIT_VERSION),
+            inbound: InboundConnection::new(read_half, INIT_VERSION),
+            state: State::Handshaking,
+            version: INIT_VERSION,
+        }
     }
 }

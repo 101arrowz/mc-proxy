@@ -1,6 +1,6 @@
 use aes::Aes128;
 use cfb8::{
-    cipher::{errors::InvalidLength, AsyncStreamCipher, NewCipher},
+    cipher::{AsyncStreamCipher, NewCipher},
     Cfb8,
 };
 use std::{

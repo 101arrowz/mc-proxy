@@ -7,8 +7,8 @@ use crate::protocol::{
     types::{Decode, Encode, LengthCappedString, UUID},
 };
 
-use serde_with::skip_serializing_none;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Version<'a> {
