@@ -1,4 +1,5 @@
 use super::yggdrasil::Error as YggdrasilError;
+use super::hypixel::Error as HypixelError;
 use reqwest::Error as HTTPError;
 use thiserror::Error;
 
@@ -8,6 +9,8 @@ pub enum Error {
     HTTPError(#[from] HTTPError),
     #[error("Yggdrasil error")]
     YggdrasilError(#[from] YggdrasilError),
+    #[error("Hypixel error")]
+    HypixelError(#[from] HypixelError),
     #[error("no access token")]
     NoAccessToken,
 }

@@ -35,6 +35,7 @@ pub struct UserInfo<'a> {
     pub id: UUID,
 }
 
+#[derive(Clone, Debug)]
 pub struct Authentication<'a> {
     client_token: Option<&'a str>,
     access_token: Option<Cow<'a, str>>,
