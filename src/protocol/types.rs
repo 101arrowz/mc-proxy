@@ -824,13 +824,13 @@ encode_impl!(Chat<'a>, self, tgt, version, {
 });
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct UUID(pub u128);
+pub struct UUID(pub [u8; 16]);
 
 impl UUID {
     pub fn to_ascii_bytes(&self) -> [u8; 32] {
         let mut buf = [0; 32];
         for i in 0..16 {
-            let byte = (self.0 >> (i << 3)) as u8;
+            let byte = self.0[i];
             let hex_a = byte & 15;
             buf[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'a' - 10 });
             let hex_b = byte >> 4;
@@ -842,7 +842,7 @@ impl UUID {
     pub fn to_ascii_bytes_hyphenated(&self) -> [u8; 36] {
         let mut buf = [b'-'; 36];
         for i in 0..16 {
-            let byte = (self.0 >> (i << 3)) as u8;
+            let byte = self.0[i];
             let index = match i {
                 0..=3 => i << 1,
                 4..=5 => (i << 1) + 1,
@@ -860,14 +860,13 @@ impl UUID {
 
     pub fn from_ascii_bytes(s: &str) -> Result<UUID, Error> {
         if s.len() == 32 {
-            let mut res = 0u128;
-            for (ind, byte) in s.bytes().enumerate() {
-                res |= ((match byte {
+            let mut res = [0; 16];
+            for (i, byte) in s.bytes().enumerate() {
+                res[i] = match byte {
                     b'0'..=b'9' => byte - b'0',
                     b'a'..=b'f' => byte - b'a' + 10,
                     _ => return Err(Error::Malformed),
-                }) as u128)
-                    << (ind << 2);
+                };
             }
             Ok(UUID(res))
         } else {
@@ -877,28 +876,22 @@ impl UUID {
 
     pub fn from_ascii_bytes_hyphenated(s: &str) -> Result<UUID, Error> {
         if s.len() == 36 {
-            let mut res = 0u128;
-            let mut ind = -1;
+            let mut res = [0; 16];
+            let mut i = 0;
             for byte in s.bytes() {
-                res |= ((match byte {
-                    b'0'..=b'9' => {
-                        ind += 1;
-                        byte - b'0'
-                    }
-                    b'a'..=b'f' => {
-                        ind += 1;
-                        byte - b'a' + 10
-                    }
+                res[i] = match byte {
+                    b'0'..=b'9' => byte - b'0',
+                    b'a'..=b'f' => byte - b'a' + 10,
                     b'-' => {
-                        if ind == 7 || ind == 11 || ind == 15 || ind == 19 {
+                        if i == 7 || i == 11 || i == 15 || i == 19 {
                             continue;
                         } else {
                             return Err(Error::Malformed);
                         }
                     }
                     _ => return Err(Error::Malformed),
-                }) as u128)
-                    << (ind << 2);
+                };
+                i += 1;
             }
             Ok(UUID(res))
         } else {
@@ -908,14 +901,15 @@ impl UUID {
 }
 
 decode_impl!(UUID, src, {
-    match src.read_u128().await {
-        Ok(num) => Ok(UUID(num)),
+    let mut buf = [0; 16];
+    match src.read_exact(&mut buf).await {
+        Ok(_) => Ok(UUID(buf)),
         Err(err) => Err(handle_io_err(err)),
     }
 });
 
 encode_impl!(UUID, self, tgt, {
-    tgt.write_u128(self.0).await.map_err(handle_io_err)
+    tgt.write_all(&self.0).await.map_err(handle_io_err)
 });
 
 impl FromStr for UUID {

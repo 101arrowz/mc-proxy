@@ -1,6 +1,5 @@
 #![feature(type_alias_impl_trait)]
 #![feature(generic_associated_types)]
-#![feature(trait_alias)]
 
 mod connection;
 mod protocol;
@@ -8,7 +7,10 @@ mod web;
 
 use protocol::version::ProtocolVersion;
 
+use std::borrow::Cow;
 use connection::{Client, ServerConnection, State, packets::{login::{ServerLoginCredentials, Player}}};
+use web::yggdrasil::{UserInfo, OnlineMode, Authentication};
+use reqwest::Client as HTTPClient;
 use tokio::net::TcpListener;
 
 #[tokio::main(flavor = "current_thread")]
@@ -16,14 +18,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("localhost:25565").await?;
     let mut conn = ServerConnection::new(listener.accept().await?.0).await;
     conn.accept_handshake().await?;
-    let web_client = reqwest::Client::new();
-    let mut auth = web::yggdrasil::Authentication::new(
+    let web_client = HTTPClient::new();
+    let mut auth = Authentication::new(
         Some("my_client_name"),
         None,
         Some(web_client.clone()),
     );
     let mut args = std::env::args();
-    let web::yggdrasil::UserInfo { name, id } = auth
+    let UserInfo { name, id } = auth
         .authenticate(&args.nth(1).unwrap(), &args.nth(0).unwrap())
         .await?
         .user_info;
@@ -32,16 +34,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client.handshake(State::Login).await?;
         conn.accept_login(|_| async {
             Ok(ServerLoginCredentials::OfflineMode(Player {
-                username: std::borrow::Cow::Borrowed(&name),
+                username: Cow::Borrowed(&name),
                 uuid: id
             }))
         }).await?;
         client
             .login(
                 Some(web_client),
-                web::yggdrasil::OnlineMode::new(
-                    web::yggdrasil::UserInfo {
-                        name: std::borrow::Cow::Owned(name.into_owned()),
+                OnlineMode::new(
+                    UserInfo {
+                        name: Cow::Owned(name.into_owned()),
                         id,
                     },
                     auth,
