@@ -12,9 +12,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn handle_io_err(err: std::io::Error) -> Error {
     match err.kind() {
-        // std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEof,
-        // std::io::ErrorKind::WriteZero => Error::NeedMore,
-        _ => panic!("{:?}", err),
+        std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEOF,
+        std::io::ErrorKind::WriteZero => Error::NeedMore,
+        _ => Error::Unknown
     }
 }
 
@@ -831,9 +831,9 @@ impl UUID {
         let mut buf = [0; 32];
         for i in 0..16 {
             let byte = self.0[i];
-            let hex_a = byte & 15;
+            let hex_a = byte >> 4;
             buf[i << 1] = hex_a + (if hex_a < 10 { b'0' } else { b'a' - 10 });
-            let hex_b = byte >> 4;
+            let hex_b = byte & 15;
             buf[(i << 1) + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'a' - 10 });
         }
         buf
@@ -850,9 +850,9 @@ impl UUID {
                 8..=9 => (i << 1) + 3,
                 _ => (i << 1) + 4,
             };
-            let hex_a = byte & 15;
+            let hex_a = byte >> 4;
             buf[index] = hex_a + (if hex_a < 10 { b'0' } else { b'a' - 10 });
-            let hex_b = byte >> 4;
+            let hex_b = byte & 15;
             buf[index + 1] = hex_b + (if hex_b < 10 { b'0' } else { b'a' - 10 });
         }
         buf
@@ -862,11 +862,11 @@ impl UUID {
         if s.len() == 32 {
             let mut res = [0; 16];
             for (i, byte) in s.bytes().enumerate() {
-                res[i] = match byte {
+                res[i >> 1] |= match byte {
                     b'0'..=b'9' => byte - b'0',
                     b'a'..=b'f' => byte - b'a' + 10,
                     _ => return Err(Error::Malformed),
-                };
+                } << (4 - ((i & 1) << 2));
             }
             Ok(UUID(res))
         } else {
@@ -879,18 +879,18 @@ impl UUID {
             let mut res = [0; 16];
             let mut i = 0;
             for byte in s.bytes() {
-                res[i] = match byte {
+                res[i >> 1] |= match byte {
                     b'0'..=b'9' => byte - b'0',
                     b'a'..=b'f' => byte - b'a' + 10,
                     b'-' => {
-                        if i == 7 || i == 11 || i == 15 || i == 19 {
+                        if i == 8 || i == 12 || i == 16 || i == 20 {
                             continue;
                         } else {
                             return Err(Error::Malformed);
                         }
                     }
                     _ => return Err(Error::Malformed),
-                };
+                } << (4 - ((i & 1) << 2));
                 i += 1;
             }
             Ok(UUID(res))

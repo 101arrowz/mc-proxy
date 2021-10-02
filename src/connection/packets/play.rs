@@ -178,14 +178,6 @@ impl ServerConnection {
             let client = reqwest::Client::new();
             try_join!(
                 async {
-                    // loop {
-                    //     tokio::time::sleep(tokio::time::Duration::from_millis(10000)).await;
-                    //     dbg!("sending e");
-                    //     let mut out_packet = outbound.create_packet(1, Some(51)).await?;
-                    //     LengthCappedString::<256>("i am a script that sends this message every second".into()).encode(&mut out_packet, version).await?;
-                    //     out_packet.shutdown().await?;
-                    //     dbg!("sent e");
-                    // }
                     loop {
                         let mut packet = server_inbound.next_packet().await?;
                         match packet.id {
@@ -199,7 +191,7 @@ impl ServerConnection {
                                     } else {
                                         Vec::from([Cow::Borrowed(uname)])
                                     };
-                                    for good_player in join_all(players.into_iter().map(|player| {
+                                    let good_players = join_all(players.into_iter().map(|player| {
                                         let client = &client;
                                         let send_to_client = send_to_client.clone();
                                         async move {
@@ -223,23 +215,32 @@ impl ServerConnection {
                                                     let bw_stats = &player_info["stats"]["Bedwars"];
                                                     if bw_stats != &serde_json::Value::Null {
                                                         let fkdr = bw_stats["final_kills_bedwars"].as_f64().unwrap_or(0.0) / bw_stats["final_deaths_bedwars"].as_f64().unwrap_or(1.0);
-                                                        if fkdr > 5.0 {
+                                                        if fkdr > 3.5 {
                                                             out = Some((fkdr, player.to_string()));
                                                         }
                                                         result = format!("{:.2}", fkdr).into();
                                                     }
                                                 }
                                             } else {
-                                                result = "Nicked".into()
+                                                result = "Nicked".into();
+                                                out = Some((-1.0, player.to_string()));
                                             }
                                             send_to_client.borrow_mut().push(Chat::Raw([&player, ": ", &result].concat().into()));
                                             Ok::<Option<(f64, String)>, Error>(out)
                                         }
-                                    })).await {
-                                        if let Some((fkdr, name)) = good_player? {
-                                            let mut out_packet = outbound.create_packet(1, None).await?;
-                                            LengthCappedString::<256>(format!("[QDodge Bot] {} has {:.2} FKDR", name, fkdr).into()).encode(&mut out_packet, version).await?;
-                                            out_packet.shutdown().await?;
+                                    })).await;
+                                    if uname == "*" {
+                                        for good_player in good_players {
+                                            if let Some((fkdr, name)) = good_player? {
+                                                let mut out_packet = outbound.create_packet(1, None).await?;
+                                                let warning = if fkdr < 0.0 {
+                                                    format!("[QDodge Bot] {} is nicked", name)
+                                                } else {
+                                                    format!("[QDodge Bot] {} has {:.2} FKDR", name, fkdr)
+                                                };
+                                                LengthCappedString::<256>(warning.into()).encode(&mut out_packet, version).await?;
+                                                out_packet.shutdown().await?;
+                                            }
                                         }
                                     }
                                 } else {  
