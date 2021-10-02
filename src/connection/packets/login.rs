@@ -326,7 +326,7 @@ impl ServerConnection {
                 ServerLoginCredentials::OnlineMode => todo!(),
             };
             if self.version < ProtocolVersion::V1_16 {
-                let mut out_packet = self.outbound.create_packet(2, Some(player.username.len() + 37)).await?;
+                let mut out_packet = self.outbound.create_packet(2, Some(player.username.len() + 38)).await?;
                 LengthCappedString::<36>(Cow::Borrowed(unsafe { from_utf8_unchecked(&player.uuid.to_ascii_bytes_hyphenated()) }))
                     .encode(&mut out_packet, self.version).await?;
                 LengthCappedString::<16>(Cow::Borrowed(&player.username)).encode(&mut out_packet, self.version).await?;
@@ -335,6 +335,7 @@ impl ServerConnection {
                 player.uuid.encode(&mut out_packet, self.version).await?;
                 LengthCappedString::<16>(Cow::Borrowed(&player.username)).encode(&mut out_packet, self.version).await?;
             }
+            self.state = State::Play;
             Ok(player)
         } else {
             Err(Error::InvalidState)

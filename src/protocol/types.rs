@@ -823,7 +823,7 @@ encode_impl!(Chat<'a>, self, tgt, version, {
     chat.encode(tgt, version).await
 });
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct UUID(pub [u8; 16]);
 
 impl UUID {

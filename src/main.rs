@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let mut client = Client::connect("mc.hypixel.net", ProtocolVersion::V1_8_9).await?;
         client.handshake(State::Login).await?;
-        conn.accept_login(|_| async {
+        conn.accept_login(|nm| async {
             Ok(ServerLoginCredentials::OfflineMode(Player {
                 username: Cow::Borrowed(&name),
                 uuid: id
