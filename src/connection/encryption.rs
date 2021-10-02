@@ -4,7 +4,7 @@ use cfb8::{
     Cfb8,
 };
 use std::{
-    cmp::max,
+    cmp::min,
     pin::Pin,
     task::{ready, Context, Poll},
 };
@@ -63,7 +63,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for Encryptor<W> {
         if self.cipher.is_some() {
             ready!(self.flush_buffer(cx))?;
             self.pos = 0;
-            let cap = max(buf.len(), BUFFER_SIZE);
+            let cap = min(buf.len(), BUFFER_SIZE);
             self.cap = cap;
             // extra buffer to avoid double &mut self
             let mut encrypted_buffer = [0; BUFFER_SIZE];

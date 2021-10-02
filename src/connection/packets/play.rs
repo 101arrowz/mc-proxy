@@ -1,8 +1,8 @@
-use crate::connection::{
+use crate::{connection::{
     codec::{IncomingPacket, OutgoingPacket},
     error::Error,
     Client, ServerConnection, State,
-};
+}, protocol::types::{Decode, LengthCappedString}};
 use crate::protocol::{types::{Encode, Chat, UUID}, version::ProtocolVersion};
 use std::{
     convert::Infallible,
@@ -164,8 +164,7 @@ impl ServerConnection {
                 ..
             } = client;
             let version = *version;
-            let to_client: Rc<RefCell<Vec<Chat>>> = Rc::new(RefCell::new(Vec::new()));
-            let send_to_client = to_client.clone();
+            let send_to_client = Rc::new(RefCell::new(Vec::new()));
             let ServerConnection {
                 inbound: server_inbound,
                 outbound: server_outbound,
@@ -175,13 +174,29 @@ impl ServerConnection {
             let server_version = *server_version;
             try_join!(
                 async {
+                    // loop {
+                    //     tokio::time::sleep(tokio::time::Duration::from_millis(10000)).await;
+                    //     dbg!("sending e");
+                    //     let mut out_packet = outbound.create_packet(1, Some(51)).await?;
+                    //     LengthCappedString::<256>("i am a script that sends this message every second".into()).encode(&mut out_packet, version).await?;
+                    //     out_packet.shutdown().await?;
+                    //     dbg!("sent e");
+                    // }
                     loop {
                         let mut packet = server_inbound.next_packet().await?;
                         match packet.id {
-                            15 => {
-                                packet.content.close().await?;
-                                to_client.borrow_mut().push(Chat::Raw("hello world".into()));
-                            }
+                            1 => {
+                                let msg = LengthCappedString::<256>::decode(&mut packet.content, server_version).await?;
+                                packet.content.finished()?;
+                                if msg.0 == "/hello_world" {
+                                    send_to_client.borrow_mut().push(Chat::Raw("hello world!".into()));
+                                } else {
+                                    let mut out_packet = outbound.create_packet(packet.id, Some(packet.len)).await?;
+                                    msg.encode(&mut out_packet, version).await?;
+                                    out_packet.shutdown().await?;
+                                }
+                                
+                            },
                             _ => {
                                 let mut out_packet = outbound.create_packet(packet.id, Some(packet.len)).await?;
                                 copy(&mut packet.content, &mut out_packet).await?;
@@ -194,16 +209,19 @@ impl ServerConnection {
                 },
                 async {
                     loop {
-                        for out_chat in send_to_client.borrow_mut().drain(..) {
-                            let mut out_packet = server_outbound.create_packet(15, None).await?;
-                            out_chat.encode(&mut out_packet, version).await?;
-                            1u8.encode(&mut out_packet, version).await?;
-                            UUID(0).encode(&mut out_packet, version).await?;
+                        while let Some(out_chat) = send_to_client.borrow_mut().pop() {
+                            let mut out_packet = server_outbound.create_packet(2, None).await?;
+                            out_chat.encode(&mut out_packet, server_version).await?;
+                            1u8.encode(&mut out_packet, server_version).await?;
                             out_packet.shutdown().await?;
                         }
                         let mut packet = inbound.next_packet().await?;
+                        let mut buf = Vec::new();
+                        packet.content.read_to_end(&mut buf).await?;
+                        // let (_, _, buf) = dbg!(packet.id, packet.len, buf);
                         let mut out_packet = server_outbound.create_packet(packet.id, Some(packet.len)).await?;
-                        copy(&mut packet.content, &mut out_packet).await?;
+                        // copy(&mut packet.content, &mut out_packet).await?;
+                        out_packet.write_all(&buf).await?;
                         packet.content.finished()?;
                         out_packet.shutdown().await?;
                     }
