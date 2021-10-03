@@ -36,12 +36,12 @@ pub enum State {
 }
 
 pub struct Client {
-    outbound: OutboundConnection<OwnedWriteHalf>,
-    inbound: InboundConnection<OwnedReadHalf>,
-    host: String,
-    port: u16,
-    state: State,
-    version: ProtocolVersion,
+    pub outbound: OutboundConnection<OwnedWriteHalf>,
+    pub inbound: InboundConnection<OwnedReadHalf>,
+    pub host: String,
+    pub port: u16,
+    pub state: State,
+    pub version: ProtocolVersion,
 }
 
 impl Client {
@@ -81,10 +81,10 @@ impl Client {
 }
 
 pub struct ServerConnection {
-    outbound: OutboundConnection<OwnedWriteHalf>,
-    inbound: InboundConnection<OwnedReadHalf>,
-    state: State,
-    version: ProtocolVersion,
+    pub outbound: OutboundConnection<OwnedWriteHalf>,
+    pub inbound: InboundConnection<OwnedReadHalf>,
+    pub state: State,
+    pub version: ProtocolVersion,
 }
 
 impl ServerConnection {

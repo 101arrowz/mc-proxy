@@ -42,22 +42,27 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for HypixelResponse<T> {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct PlayerBedwarsStats {
+pub struct PlayerBedwarsStats {
     #[serde(rename = "final_kills_bedwars")]
-    final_kills: Option<u32>,
+    pub final_kills: Option<u32>,
     #[serde(rename = "final_deaths_bedwars")]
-    final_deaths: Option<u32>
+    pub final_deaths: Option<u32>
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PlayerStats {
     #[serde(rename = "Bedwars")]
-    bedwars: Option<PlayerBedwarsStats>
+    pub bedwars: Option<PlayerBedwarsStats>
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PlayerInfo {
-    stats: PlayerStats
+    pub stats: PlayerStats
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct PlayerResponse {
+    player: PlayerInfo
 }
 
 #[derive(Clone, Debug)]
@@ -80,11 +85,11 @@ impl Hypixel<'_> {
 
     pub async fn info(&self, uuid: UUID) -> Result<PlayerInfo, WebError> {
         match self.with_auth(self.client.get("https://api.hypixel.net/player"))
-            .query(&[("uuid", uuid)])
+            .query(&[("uuid", std::str::from_utf8(&uuid.to_ascii_bytes_hyphenated()).unwrap())])
             .send().await?
             .json().await?
         {
-            HypixelResponse::Ok(val) => Ok(val),
+            HypixelResponse::Ok(PlayerResponse { player }) => Ok(player),
             HypixelResponse::Err(err) => Err(err)?
         }
     }

@@ -24,12 +24,12 @@ impl Mojang<'_> {
         #[derive(Deserialize)]
         struct UUIDResponse {
             #[serde(with = "serde_raw_uuid")]
-            uuid: UUID
+            id: UUID
         }
         let res: UUIDResponse = self.client.get(["https://api.mojang.com/users/profiles/minecraft/", name].concat())
             .send().await?
             .error_for_status()?
             .json().await?;
-        Ok(res.uuid)
+        Ok(res.id)
     }
 }

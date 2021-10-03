@@ -47,7 +47,7 @@ impl Client {
         mut client: Option<HTTPClient>,
         mut authenticator: impl Authenticator,
         mut plugin_handler: impl FnMut(Cow<'a, str>, Vec<u8>) -> P,
-    ) -> Result<Player<'_>, Error> {
+    ) -> Result<Player<'a>, Error> {
         if self.state == State::Login {
             let username = authenticator.username();
             let start_packet_len = username.len() + 1;

@@ -530,11 +530,11 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         }
     }
 
-    pub async fn create_packet(
-        &mut self,
+    pub async fn create_packet<'a>(
+        &'a mut self,
         id: i32,
         len: Option<usize>,
-    ) -> Result<OutgoingPacket<'_, W>, Error> {
+    ) -> Result<OutgoingPacket<'a, W>, Error> {
         let id = VarInt(id);
         let mut packet = OutgoingInnerPacket::new(
             &mut self.conn,
