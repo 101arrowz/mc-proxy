@@ -12,3 +12,4 @@ The main purpose of this particular project is proxying and adding custom comman
 - Make more extensible - add an on-the-fly command creation system
 - Add a GUI for server selection
 - Fix bugs (there are a lot)
+- Fix warnings (there are even more)

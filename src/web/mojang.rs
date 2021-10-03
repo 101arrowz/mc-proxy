@@ -1,19 +1,16 @@
-use crate::protocol::types::{serde_raw_uuid, UUID};
 use super::error::Error as WebError;
-use serde::{Deserialize};
+use crate::protocol::types::{serde_raw_uuid, UUID};
 use reqwest::{Client, StatusCode};
+use serde::Deserialize;
 
 #[derive(Clone, Debug)]
 pub struct Mojang<'a> {
     access_token: Option<&'a str>,
-    client: Client
+    client: Client,
 }
 
 impl Mojang<'_> {
-    pub fn new<'a>(
-        access_token: Option<&'a str>,
-        client: Option<Client>,
-    ) -> Mojang<'a> {
+    pub fn new<'a>(access_token: Option<&'a str>, client: Option<Client>) -> Mojang<'a> {
         Mojang {
             access_token,
             client: client.unwrap_or_default(),
@@ -24,12 +21,16 @@ impl Mojang<'_> {
         #[derive(Deserialize)]
         struct UUIDResponse {
             #[serde(with = "serde_raw_uuid")]
-            id: UUID
+            id: UUID,
         }
-        let res: UUIDResponse = self.client.get(["https://api.mojang.com/users/profiles/minecraft/", name].concat())
-            .send().await?
+        let res: UUIDResponse = self
+            .client
+            .get(["https://api.mojang.com/users/profiles/minecraft/", name].concat())
+            .send()
+            .await?
             .error_for_status()?
-            .json().await?;
+            .json()
+            .await?;
         Ok(res.id)
     }
 }

@@ -14,7 +14,7 @@ fn handle_io_err(err: std::io::Error) -> Error {
     match err.kind() {
         std::io::ErrorKind::UnexpectedEof => Error::UnexpectedEOF,
         std::io::ErrorKind::WriteZero => Error::NeedMore,
-        _ => Error::Unknown
+        _ => Error::Unknown,
     }
 }
 

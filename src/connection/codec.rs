@@ -16,7 +16,10 @@ use std::{
     pin::Pin,
     task::{ready, Context, Poll},
 };
-use tokio::{pin, io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf}};
+use tokio::{
+    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
+    pin,
+};
 
 pub struct InboundConnection<R: AsyncReadExt + Unpin> {
     pub(super) conn: Decryptor<R>,
@@ -373,16 +376,14 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         match self.get_mut() {
-            OutgoingInnerPacket::Normal(writer) => {
-                Poll::Ready(if writer.remaining() != 0 {
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        Error::IncompletePacket,
-                    ))
-                } else {
-                    Ok(())
-                })
-            }
+            OutgoingInnerPacket::Normal(writer) => Poll::Ready(if writer.remaining() != 0 {
+                Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    Error::IncompletePacket,
+                ))
+            } else {
+                Ok(())
+            }),
             OutgoingInnerPacket::UnknownLength {
                 vec,
                 version,
@@ -407,9 +408,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    ready!(
-                        Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])
-                    )?;
+                    ready!(Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]))?;
                     *shutting_down = true;
                 }
                 while *len != 0 {
@@ -443,11 +442,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                     vec.get_ref().vec()
                 };
                 if !*shutting_down {
-                    let uncompressed_len = if use_cache {
-                        0
-                    } else {
-                        *len
-                    };
+                    let uncompressed_len = if use_cache { 0 } else { *len };
                     let uncompressed_len_varint = VarInt(uncompressed_len as i32);
                     let true_len = compressed.len() + uncompressed_len_varint.len();
                     // Still works when use_cache == true b/c true_len == *len
@@ -462,7 +457,8 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                     let mut encode_buf = [0u8; 10];
                     let mut encode_buf = Cursor::new(encode_buf.as_mut());
                     {
-                        let total_len_encode = VarInt(true_len as i32).encode(&mut encode_buf, *version);
+                        let total_len_encode =
+                            VarInt(true_len as i32).encode(&mut encode_buf, *version);
                         pin!(total_len_encode);
                         if total_len_encode.poll(cx) == Poll::Pending {
                             unreachable!("VarInt encode on cursor was not immediately ready");
@@ -476,16 +472,14 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    ready!(
-                        Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos])
-                    )?;
+                    ready!(Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]))?;
                     *len = compressed.len();
                     *shutting_down = true;
                 }
                 while *len != 0 {
-                    *len -= ready!(
-                        Pin::new(&mut *tgt).poll_write(cx, &compressed[compressed.len() - *len..])
-                    )?;
+                    *len -=
+                        ready!(Pin::new(&mut *tgt)
+                            .poll_write(cx, &compressed[compressed.len() - *len..]))?;
                 }
                 Poll::Ready(Ok(()))
             }

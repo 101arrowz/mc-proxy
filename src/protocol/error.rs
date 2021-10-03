@@ -9,5 +9,5 @@ pub enum Error {
     #[error("malformed data")]
     Malformed,
     #[error("unknown error")]
-    Unknown
+    Unknown,
 }

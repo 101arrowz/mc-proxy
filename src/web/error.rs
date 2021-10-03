@@ -1,5 +1,5 @@
-use super::yggdrasil::Error as YggdrasilError;
 use super::hypixel::Error as HypixelError;
+use super::yggdrasil::Error as YggdrasilError;
 use reqwest::Error as HTTPError;
 use thiserror::Error;
 
