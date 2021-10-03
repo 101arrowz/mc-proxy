@@ -91,8 +91,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     ..
                 } = &mut client;
                 let version = *version;
-                let send_to_client = Rc::new(RefCell::new(Vec::new()));
-                let all_local_players = Rc::new(RefCell::new(HashMap::<UUID, String>::new()));
+                let send_to_client = RefCell::new(Vec::new());
+                let all_local_players = RefCell::new(HashMap::<UUID, String>::new());
                 let ServerConnection {
                     inbound: server_inbound,
                     outbound: server_outbound,
@@ -150,7 +150,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                                 / bw_stats
                                                                     .final_deaths
                                                                     .map_or(1.0, |v| v as f64);
-                                                            if fkdr > 3.5 {
+                                                            if fkdr > 1.0 {
                                                                 out = Some((
                                                                     fkdr,
                                                                     player.to_string(),
