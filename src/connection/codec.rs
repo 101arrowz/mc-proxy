@@ -87,7 +87,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                 }
             }
             IncomingInnerPacket::Decompressed(reader) => {
-                if reader.remaining() == 0 && reader.get_ref().get_ref().get_ref().remaining() == 0
+                if reader.remaining() == 0
                 {
                     Ok(())
                 } else {

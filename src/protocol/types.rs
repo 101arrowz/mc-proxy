@@ -457,7 +457,7 @@ const YELLOW: &str = "yellow";
 const WHITE: &str = "white";
 const RESET: &str = "reset";
 
-#[derive(Clone, Debug, PartialEq, Eq, DeserializeFromStr)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, DeserializeFromStr)]
 pub enum Color {
     Black,
     DarkBlue,
@@ -643,9 +643,9 @@ impl ChatHoverEvent<'_> {
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChatScore<'a> {
-    name: Cow<'a, str>,
-    objective: Cow<'a, str>,
-    value: Option<Cow<'a, str>>,
+    pub name: Cow<'a, str>,
+    pub objective: Cow<'a, str>,
+    pub value: Option<Cow<'a, str>>,
 }
 
 impl ChatScore<'_> {
@@ -679,6 +679,12 @@ pub enum ChatValue<'a> {
     },
 }
 
+impl Default for ChatValue<'_> {
+    fn default() -> Self {
+        ChatValue::Text { text: "".into() }
+    }
+}
+
 impl ChatValue<'_> {
     pub fn into_owned(self) -> ChatValue<'static> {
         match self {
@@ -703,21 +709,21 @@ impl ChatValue<'_> {
 }
 
 #[serde_with::skip_serializing_none]
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatObject<'a> {
-    bold: Option<bool>,
-    italic: Option<bool>,
-    underlined: Option<bool>,
-    strikethrough: Option<bool>,
-    obfuscated: Option<bool>,
-    color: Option<Color>,
-    insertion: Option<Cow<'a, str>>,
-    click_event: Option<ChatClickEvent<'a>>,
-    hover_event: Option<ChatHoverEvent<'a>>,
-    extra: Option<Vec<Chat<'a>>>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underlined: Option<bool>,
+    pub strikethrough: Option<bool>,
+    pub obfuscated: Option<bool>,
+    pub color: Option<Color>,
+    pub insertion: Option<Cow<'a, str>>,
+    pub click_event: Option<ChatClickEvent<'a>>,
+    pub hover_event: Option<ChatHoverEvent<'a>>,
+    pub extra: Option<Vec<Chat<'a>>>,
     #[serde(flatten)]
-    value: ChatValue<'a>,
+    pub value: ChatValue<'a>,
 }
 
 impl ChatObject<'_> {

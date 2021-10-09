@@ -17,11 +17,12 @@ impl Mojang<'_> {
         }
     }
 
-    pub async fn get_uuid(&self, name: &str) -> Result<UUID, WebError> {
+    pub async fn get_uuid(&self, name: &str) -> Result<(UUID, String), WebError> {
         #[derive(Deserialize)]
         struct UUIDResponse {
             #[serde(with = "serde_raw_uuid")]
             id: UUID,
+            name: String
         }
         let res: UUIDResponse = self
             .client
@@ -31,6 +32,6 @@ impl Mojang<'_> {
             .error_for_status()?
             .json()
             .await?;
-        Ok(res.id)
+        Ok((res.id, res.name))
     }
 }
