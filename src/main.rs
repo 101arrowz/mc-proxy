@@ -7,26 +7,29 @@ mod protocol;
 mod web;
 
 use futures::future::join_all;
-use protocol::version::ProtocolVersion;
 
+use bimap::BiHashMap;
 use connection::{
     packets::login::{Player, ServerLoginCredentials},
     Client, ServerConnection, State,
 };
 use protocol::error::Error as ProtocolError;
 use reqwest::Client as HTTPClient;
-use std::{borrow::Cow, cell::RefCell, iter::once, env::args, error::Error, io::Cursor,};
-use bimap::BiHashMap;
-use unicase::Ascii;
+use std::{borrow::Cow, cell::RefCell, env::args, error::Error, io::Cursor};
 use tokio::{
     io::{copy, AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
-    try_join,
-    task
+    task, try_join,
 };
+use unicase::Ascii;
 use web::yggdrasil::{Authentication, OnlineMode, UserInfo};
 
-use crate::{protocol::types::{Chat, ChatObject, ChatValue, Color, Decode, Encode, LengthCappedString, UUID, VarInt}, web::{hypixel::Hypixel, mojang::Mojang}};
+use crate::{
+    protocol::types::{
+        Chat, ChatObject, ChatValue, Color, Decode, Encode, LengthCappedString, VarInt, UUID,
+    },
+    web::{hypixel::Hypixel, mojang::Mojang},
+};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -45,7 +48,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if let Err(err) = async {
                     let mut conn = ServerConnection::new(conn).await;
                     conn.accept_handshake().await?;
-                    let mut client = Client::connect("mc.hypixel.net", ProtocolVersion::V1_8_9).await?;
+                    let mut client = Client::connect("mc.hypixel.net", conn.version).await?;
                     client.handshake(conn.state).await?;
                     if conn.state == State::Status {
                         let packet = conn.inbound.next_packet().await?;
@@ -71,7 +74,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             .authenticate(&username, &password)
                             .await?
                             .user_info;
-                        conn.accept_login(|nm| async {
+                        conn.accept_login(|_| async {
                             Ok(ServerLoginCredentials::OfflineMode(Player {
                                 username: Cow::Borrowed(&name),
                                 uuid: id,
@@ -91,7 +94,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 Client::NO_LOGIN_PLUGIN_HANDLER,
                             )
                             .await?;
-        
                         let Client {
                             inbound,
                             outbound,
@@ -132,7 +134,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         .iter()
                                                         .map(|(&uuid, v)| (Some(uuid), Cow::Owned(v.as_ref().into())))
                                                         .collect::<Vec<_>>()
-                                                } else { 
+                                                } else {
                                                     unames.split(' ').map(|uname| (all_local_players.borrow().get_by_right(&Ascii::new(uname.into())).map(|&v| v), Cow::Borrowed(uname))).collect()
                                                 };
                                                 let good_players =
@@ -239,6 +241,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         }
                                     }
                                 }
+                                #[allow(unreachable_code)]
                                 Ok::<(), Box<dyn Error>>(())
                             },
                             async {
@@ -324,6 +327,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         }
                                     }
                                 }
+                                #[allow(unreachable_code)]
                                 Ok::<(), Box<dyn Error>>(())
                             }
                         )?;
@@ -336,6 +340,5 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             });
         }
-        Ok(())
     }).await
 }

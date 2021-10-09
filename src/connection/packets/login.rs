@@ -16,7 +16,6 @@ use sha1::{Digest, Sha1};
 use std::{
     borrow::Cow,
     future::{ready, Future, Ready},
-    io::Cursor,
     str::from_utf8_unchecked,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

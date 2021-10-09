@@ -69,14 +69,14 @@ pub enum Rank {
     MVPPlusPlus(Color, Color),
     Youtuber,
     Admin,
-    Custom(String)
+    Custom(String),
 }
 
 #[derive(Clone, Debug)]
 pub struct PlayerInfo {
     pub stats: PlayerStats,
     pub rank: Rank,
-    pub name: String
+    pub name: String,
 }
 
 impl<'de> Deserialize<'de> for PlayerInfo {
@@ -87,38 +87,68 @@ impl<'de> Deserialize<'de> for PlayerInfo {
             Rank::Custom(prefix.as_str().unwrap().into())
         } else {
             // TODO: Make this less godawful
-            let rank = map.get("rank").and_then(|rank| rank.as_str()).and_then(|v| if v == "NORMAL" { None } else { Some(v) })
-                .or_else(|| map.get("monthlyPackageRank").and_then(|rank| rank.as_str()).and_then(|v| if v == "NONE" { None } else { Some(v) }))
-                .or_else(|| map.get("newPackageRank").and_then(|rank| rank.as_str()).and_then(|v| if v == "NONE" { None } else { Some(v) }))
-                .or_else(|| map.get("packageRank").and_then(|rank| rank.as_str()).and_then(|v| if v == "NONE" { None } else { Some(v) }));
+            let rank = map
+                .get("rank")
+                .and_then(|rank| rank.as_str())
+                .and_then(|v| if v == "NORMAL" { None } else { Some(v) })
+                .or_else(|| {
+                    map.get("monthlyPackageRank")
+                        .and_then(|rank| rank.as_str())
+                        .and_then(|v| if v == "NONE" { None } else { Some(v) })
+                })
+                .or_else(|| {
+                    map.get("newPackageRank")
+                        .and_then(|rank| rank.as_str())
+                        .and_then(|v| if v == "NONE" { None } else { Some(v) })
+                })
+                .or_else(|| {
+                    map.get("packageRank")
+                        .and_then(|rank| rank.as_str())
+                        .and_then(|v| if v == "NONE" { None } else { Some(v) })
+                });
             if let Some(rank) = rank {
                 match rank {
                     "ADMIN" => Rank::Admin,
                     "YOUTUBER" => Rank::Youtuber,
                     "SUPERSTAR" => Rank::MVPPlusPlus(
-                        if let Some(color) = map.get("monthlyRankColor").and_then(|rank| rank.as_str()) {
-                            color.to_ascii_lowercase().parse().map_err(de::Error::custom)?
+                        if let Some(color) =
+                            map.get("monthlyRankColor").and_then(|rank| rank.as_str())
+                        {
+                            color
+                                .to_ascii_lowercase()
+                                .parse()
+                                .map_err(de::Error::custom)?
                         } else {
                             Color::Gold
                         },
-                        if let Some(plus_color) = map.get("rankPlusColor").and_then(|rank| rank.as_str()) {
-                            plus_color.to_ascii_lowercase().parse().map_err(de::Error::custom)?
+                        if let Some(plus_color) =
+                            map.get("rankPlusColor").and_then(|rank| rank.as_str())
+                        {
+                            plus_color
+                                .to_ascii_lowercase()
+                                .parse()
+                                .map_err(de::Error::custom)?
                         } else {
                             Color::Red
-                        }
+                        },
                     ),
                     "MVP_PLUS" => Rank::MVPPlus(
-                        if let Some(plus_color) = map.get("rankPlusColor").and_then(|rank| rank.as_str()) {
-                            plus_color.to_ascii_lowercase().parse().map_err(de::Error::custom)?
+                        if let Some(plus_color) =
+                            map.get("rankPlusColor").and_then(|rank| rank.as_str())
+                        {
+                            plus_color
+                                .to_ascii_lowercase()
+                                .parse()
+                                .map_err(de::Error::custom)?
                         } else {
                             Color::Red
-                        }
+                        },
                     ),
                     "MVP" => Rank::MVP,
                     "VIP_PLUS" => Rank::VIPPlus,
                     "VIP" => Rank::VIP,
                     "NORMAL" | "NONE" | "DEFAULT" => Rank::Default,
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
             } else {
                 Rank::Default
@@ -136,7 +166,7 @@ impl<'de> Deserialize<'de> for PlayerInfo {
                 .ok_or_else(|| de::Error::missing_field("displayname"))
                 .map(Deserialize::deserialize)?
                 .map_err(de::Error::custom)?,
-            rank
+            rank,
         })
     }
 }
@@ -146,7 +176,9 @@ impl From<&PlayerInfo> for Chat<'static> {
         match &info.rank {
             &Rank::MVPPlus(plus_color) => Chat::Object(ChatObject {
                 color: Some(Color::Aqua),
-                value: ChatValue::Text { text: "[MVP".into() },
+                value: ChatValue::Text {
+                    text: "[MVP".into(),
+                },
                 extra: Some(vec![
                     Chat::Object(ChatObject {
                         color: Some(plus_color),
@@ -154,13 +186,15 @@ impl From<&PlayerInfo> for Chat<'static> {
                         ..Default::default()
                     }),
                     Chat::Raw("] ".into()),
-                    Chat::Raw(info.name.clone().into())
+                    Chat::Raw(info.name.clone().into()),
                 ]),
                 ..Default::default()
             }),
             &Rank::MVPPlusPlus(color, plus_color) => Chat::Object(ChatObject {
                 color: Some(color),
-                value: ChatValue::Text { text: "[MVP".into() },
+                value: ChatValue::Text {
+                    text: "[MVP".into(),
+                },
                 extra: Some(vec![
                     Chat::Object(ChatObject {
                         color: Some(plus_color),
@@ -168,20 +202,28 @@ impl From<&PlayerInfo> for Chat<'static> {
                         ..Default::default()
                     }),
                     Chat::Raw("] ".into()),
-                    Chat::Raw(info.name.clone().into())
+                    Chat::Raw(info.name.clone().into()),
                 ]),
                 ..Default::default()
             }),
             Rank::Default => Chat::Raw(["§7", &info.name].concat().into()),
-            rank => Chat::Raw([match rank {
-                Rank::Admin => "§c[ADMIN]",
-                Rank::Youtuber => "§c[§fYOUTUBE§c]",
-                Rank::MVP => "§b[MVP]",
-                Rank::VIPPlus => "§a[VIP§6+§a]",
-                Rank::VIP => "§a[VIP]",
-                Rank::Custom(rank) => rank,
-                _ => unreachable!()
-            }, " ", &info.name].concat().into())
+            rank => Chat::Raw(
+                [
+                    match rank {
+                        Rank::Admin => "§c[ADMIN]",
+                        Rank::Youtuber => "§c[§fYOUTUBE§c]",
+                        Rank::MVP => "§b[MVP]",
+                        Rank::VIPPlus => "§a[VIP§6+§a]",
+                        Rank::VIP => "§a[VIP]",
+                        Rank::Custom(rank) => rank,
+                        _ => unreachable!(),
+                    },
+                    " ",
+                    &info.name,
+                ]
+                .concat()
+                .into(),
+            ),
         }
     }
 }
@@ -212,10 +254,7 @@ impl Hypixel<'_> {
     pub async fn info(&self, uuid: UUID) -> Result<Option<PlayerInfo>, WebError> {
         match self
             .with_auth(self.client.get("https://api.hypixel.net/player"))
-            .query(&[(
-                "uuid",
-                uuid,
-            )])
+            .query(&[("uuid", uuid)])
             .send()
             .await?
             .json::<HypixelResponse<PlayerResponse>>()

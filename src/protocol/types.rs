@@ -1046,15 +1046,13 @@ encode_impl!(Position, self, tgt, version, {
 });
 
 mod tests {
-    use std::io::Cursor;
     use tokio::test;
 
-    use super::super::version::ProtocolVersion;
-    use super::Decode;
-    use super::Encode;
-    use super::Position;
-    use super::VarInt;
-    use super::VarLong;
+    #[cfg(test)]
+    use {
+        super::{super::version::ProtocolVersion, Decode, Encode, VarInt, VarLong},
+        std::io::Cursor,
+    };
 
     #[test]
     async fn varint() {

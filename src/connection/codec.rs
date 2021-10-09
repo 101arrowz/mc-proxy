@@ -87,8 +87,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                 }
             }
             IncomingInnerPacket::Decompressed(reader) => {
-                if reader.remaining() == 0
-                {
+                if reader.remaining() == 0 {
                     Ok(())
                 } else {
                     Err(Error::IncompletePacket)
@@ -539,9 +538,5 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         .await?;
         id.encode(&mut packet, self.version).await?;
         Ok(packet)
-    }
-
-    pub async fn shutdown(&mut self) -> Result<(), Error> {
-        Ok(self.conn.shutdown().await?)
     }
 }

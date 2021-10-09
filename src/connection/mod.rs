@@ -4,18 +4,9 @@ pub mod error;
 pub mod packets;
 mod util;
 
-use std::{
-    convert::Infallible,
-    future::{ready, Future, Ready},
-    net::SocketAddr,
-};
-
-use tokio::{
-    io::AsyncWriteExt,
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener, TcpStream,
-    },
+use tokio::net::{
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+    TcpStream,
 };
 use trust_dns_resolver::{
     config::{ResolverConfig, ResolverOpts},

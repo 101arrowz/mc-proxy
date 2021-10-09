@@ -1,6 +1,6 @@
 use super::error::Error as WebError;
 use crate::protocol::types::{serde_raw_uuid, UUID};
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde::Deserialize;
 
 #[derive(Clone, Debug)]
@@ -22,7 +22,7 @@ impl Mojang<'_> {
         struct UUIDResponse {
             #[serde(with = "serde_raw_uuid")]
             id: UUID,
-            name: String
+            name: String,
         }
         let res: UUIDResponse = self
             .client
