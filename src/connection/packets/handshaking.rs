@@ -42,7 +42,7 @@ impl ServerConnection {
         if self.state == State::Handshaking {
             let mut packet = self.inbound.next_packet().await?;
             if packet.id != 0 {
-                Err(ProtocolError::Malformed)?;
+                return Err(ProtocolError::Malformed.into());
             }
             self.version = VarInt::decode(&mut packet.content, self.version)
                 .await?
@@ -55,7 +55,7 @@ impl ServerConnection {
             let next_state = match VarInt::decode(&mut packet.content, self.version).await?.0 {
                 1 => State::Status,
                 2 => State::Login,
-                _ => Err(ProtocolError::Malformed)?,
+                _ => return Err(ProtocolError::Malformed.into()),
             };
             packet.content.finished()?;
             self.state = next_state;

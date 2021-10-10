@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     if conn.state == State::Status {
                         let packet = conn.inbound.next_packet().await?;
                         if packet.id != 0 || packet.len != 0 {
-                            Err(ProtocolError::Malformed)?;
+                            return return Err(ProtocolError::Malformed.into());
                         }
                         client.outbound.create_packet(0, Some(0)).await?;
                         loop {
@@ -135,7 +135,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         .map(|(&uuid, v)| (Some(uuid), Cow::Owned(v.as_ref().into())))
                                                         .collect::<Vec<_>>()
                                                 } else {
-                                                    unames.split(' ').map(|uname| (all_local_players.borrow().get_by_right(&Ascii::new(uname.into())).map(|&v| v), Cow::Borrowed(uname))).collect()
+                                                    unames.split(' ').map(|uname| (all_local_players.borrow().get_by_right(&Ascii::new(uname.into())).copied(), Cow::Borrowed(uname))).collect()
                                                 };
                                                 let good_players =
                                                     join_all(players.into_iter().map(|player| {
@@ -183,7 +183,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                             if nicked {
                                                                 out.push("is nicked".into());
                                                             }
-                                                            let out = if out.len() == 0 {
+                                                            let out = if out.is_empty() {
                                                                 None
                                                             } else {
                                                                 Some(format!("{} {}", &player, out.join(", ")))
@@ -274,7 +274,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                                         .0;
                                                         all_local_players
                                                             .borrow_mut()
-                                                            .insert(uuid, Ascii::new(name.into()));
+                                                            .insert(uuid, Ascii::new(name));
                                                         for _ in 0..VarInt::decode(&mut content, version)
                                                             .await?
                                                             .0

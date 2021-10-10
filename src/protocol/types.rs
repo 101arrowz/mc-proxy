@@ -532,7 +532,7 @@ impl TryFrom<&str> for Color {
 
 impl From<&Color> for Cow<'_, str> {
     fn from(value: &Color) -> Self {
-        if let &Color::Hex(hex) = value {
+        if let Color::Hex(hex) = *value {
             let mut buf = Vec::with_capacity(7);
             buf.push(b'#');
             for i in 2..8 {
@@ -833,7 +833,7 @@ encode_impl!(Chat<'a>, self, tgt, version, {
 pub struct UUID(pub [u8; 16]);
 
 impl UUID {
-    pub fn to_ascii_bytes(&self) -> [u8; 32] {
+    pub fn to_ascii_bytes(self) -> [u8; 32] {
         let mut buf = [0; 32];
         for i in 0..16 {
             let byte = self.0[i];
@@ -845,7 +845,7 @@ impl UUID {
         buf
     }
 
-    pub fn to_ascii_bytes_hyphenated(&self) -> [u8; 36] {
+    pub fn to_ascii_bytes_hyphenated(self) -> [u8; 36] {
         let mut buf = [b'-'; 36];
         for i in 0..16 {
             let byte = self.0[i];

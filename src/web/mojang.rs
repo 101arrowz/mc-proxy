@@ -10,7 +10,7 @@ pub struct Mojang<'a> {
 }
 
 impl Mojang<'_> {
-    pub fn new<'a>(access_token: Option<&'a str>, client: Option<Client>) -> Mojang<'a> {
+    pub fn new(access_token: Option<&str>, client: Option<Client>) -> Mojang {
         Mojang {
             access_token,
             client: client.unwrap_or_default(),

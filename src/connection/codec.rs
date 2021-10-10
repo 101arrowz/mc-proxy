@@ -62,7 +62,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                     if reader.get_ref().get_ref().get_ref().remaining() == 0 {
                         Ok(true)
                     } else {
-                        Err(ProtocolError::Malformed)?
+                        return Err(ProtocolError::Malformed.into());
                     }
                 } else {
                     let mut buf = Vec::with_capacity(reader.remaining());
@@ -70,7 +70,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                     if reader.get_ref().get_ref().get_ref().remaining() == 0 {
                         Ok(false)
                     } else {
-                        Err(ProtocolError::Malformed)?
+                        return Err(ProtocolError::Malformed.into());
                     }
                 }
             }
@@ -268,23 +268,29 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                     tgt,
                 })
             }
-        } else {
-            if let Some(len) = len {
-                if len > 2097151 {
-                    Err(Error::PacketTooBig(len))
-                } else {
-                    VarInt(len as i32).encode(&mut tgt, version).await?;
-                    Ok(OutgoingInnerPacket::Normal(Limit::new(tgt, len)))
-                }
+        //} else {
+        //  if let Some(len) = len {
+        //    if len > 2097151 {
+        //      Err(Error::PacketTooBig(len))
+        // } else {
+        //   VarInt(len as i32).encode(&mut tgt, version).await?;
+        //  Ok(OutgoingInnerPacket::Normal(Limit::new(tgt, len)))
+        // }
+        } else if let Some(len) = len {
+            if len > 2097151 {
+                Err(Error::PacketTooBig(len))
             } else {
-                Ok(OutgoingInnerPacket::UnknownLength {
-                    vec: Vec::new(),
-                    version,
-                    len: 0,
-                    shutting_down: false,
-                    tgt,
-                })
+                VarInt(len as i32).encode(&mut tgt, version).await?;
+                Ok(OutgoingInnerPacket::Normal(Limit::new(tgt, len)))
             }
+        } else {
+            Ok(OutgoingInnerPacket::UnknownLength {
+                vec: Vec::new(),
+                version,
+                len: 0,
+                shutting_down: false,
+                tgt,
+            })
         }
     }
 }
