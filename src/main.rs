@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     if conn.state == State::Status {
                         let packet = conn.inbound.next_packet().await?;
                         if packet.id != 0 || packet.len != 0 {
-                            return return Err(ProtocolError::Malformed.into());
+                            return Err(ProtocolError::Malformed.into());
                         }
                         client.outbound.create_packet(0, Some(0)).await?;
                         loop {
