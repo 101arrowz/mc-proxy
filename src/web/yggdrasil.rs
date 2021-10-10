@@ -139,7 +139,7 @@ impl Authentication<'_> {
                     access_token: self.access_token.as_ref().unwrap(),
                 })
             }
-            RawAuthenticationResponse::Failure(error) => Err(error)?,
+            RawAuthenticationResponse::Failure(error) => Err(error.into()),
         }
     }
 
@@ -164,7 +164,7 @@ impl Authentication<'_> {
                         access_token: self.access_token.as_ref().unwrap(),
                     })
                 }
-                RawAuthenticationResponse::Failure(error) => Err(error)?,
+                RawAuthenticationResponse::Failure(error) => Err(error.into()),
             }
         } else {
             Err(WebError::NoAccessToken)
@@ -225,7 +225,7 @@ impl Authenticator for OnlineMode<'_> {
                     access_token,
                 })
             } else {
-                Err(WebError::NoAccessToken)?
+                Err(WebError::NoAccessToken.into())
             }
         }
     }

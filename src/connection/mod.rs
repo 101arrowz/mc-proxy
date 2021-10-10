@@ -51,7 +51,7 @@ impl Client {
         {
             let record = srv.iter().next().unwrap();
             let host = record.target().to_string();
-            (host, port.unwrap_or(record.port()))
+            (host, port.unwrap_or_else(|| record.port()))
         } else {
             (domain, port.unwrap_or(25565))
         };

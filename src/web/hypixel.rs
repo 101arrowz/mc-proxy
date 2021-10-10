@@ -240,7 +240,7 @@ pub struct Hypixel<'a> {
 }
 
 impl Hypixel<'_> {
-    pub fn new<'a>(api_key: &'a str, client: Option<Client>) -> Hypixel<'a> {
+    pub fn new(api_key: &str, client: Option<Client>) -> Hypixel {
         Hypixel {
             api_key,
             client: client.unwrap_or_default(),
@@ -261,7 +261,7 @@ impl Hypixel<'_> {
             .await?
         {
             HypixelResponse::Ok(PlayerResponse { player }) => Ok(player),
-            HypixelResponse::Err(err) => Err(err)?,
+            HypixelResponse::Err(err) => Err(err.into()),
         }
     }
 }
