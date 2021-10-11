@@ -1,6 +1,6 @@
 #![feature(type_alias_impl_trait)]
 #![feature(generic_associated_types)]
-#![feature(iter_intersperse)]
+#![allow(clippy::upper_case_acronyms)]
 
 mod connection;
 mod protocol;
@@ -37,8 +37,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let listener = TcpListener::bind("localhost:25565").await?;
         let mut args = args();
         let username = args.nth(1).unwrap();
-        let password = args.nth(0).unwrap();
-        let api_key = args.nth(0).unwrap();
+        let password = args.next().unwrap();
+        let api_key = args.next().unwrap();
         loop {
             let conn = listener.accept().await?.0;
             let username = username.clone();
@@ -126,8 +126,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             .await?;
                                             let msg = &orig_msg.0;
                                             packet.content.finished()?;
-                                            if msg.starts_with("/stats ") {
-                                                let unames = &msg[7..];
+                                            if let Some(unames) = msg.strip_prefix("/stats ") {
                                                 let players = if unames == "*" {
                                                     all_local_players
                                                         .borrow()

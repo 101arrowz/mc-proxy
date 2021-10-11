@@ -40,7 +40,7 @@ pub struct Status<'a> {
 }
 
 impl Client {
-    pub async fn status<'a>(&'a mut self) -> Result<Status<'a>, Error> {
+    pub async fn status(&mut self) -> Result<Status<'_>, Error> {
         if self.state == State::Status {
             self.outbound.create_packet(0, Some(0)).await?;
             loop {
@@ -54,7 +54,7 @@ impl Client {
                                 .0;
                         match serde_json::from_str(status_str) {
                             Ok(status) => break Ok(status),
-                            Err(_) => Err(ProtocolError::Malformed)?,
+                            Err(_) => break Err(ProtocolError::Malformed.into()),
                         }
                     }
                     1 => {
@@ -66,7 +66,7 @@ impl Client {
                             )
                             .await?;
                     }
-                    _ => Err(ProtocolError::Malformed)?,
+                    _ => return Err(ProtocolError::Malformed.into()),
                 }
                 packet.content.finished()?;
             }

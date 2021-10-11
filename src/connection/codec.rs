@@ -62,7 +62,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                     if reader.get_ref().get_ref().get_ref().remaining() == 0 {
                         Ok(true)
                     } else {
-                        return Err(ProtocolError::Malformed.into());
+                        Err(ProtocolError::Malformed.into())
                     }
                 } else {
                     let mut buf = Vec::with_capacity(reader.remaining());
@@ -70,7 +70,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                     if reader.get_ref().get_ref().get_ref().remaining() == 0 {
                         Ok(false)
                     } else {
-                        return Err(ProtocolError::Malformed.into());
+                        Err(ProtocolError::Malformed.into())
                     }
                 }
             }
@@ -529,11 +529,11 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         }
     }
 
-    pub async fn create_packet<'a>(
-        &'a mut self,
+    pub async fn create_packet(
+        &mut self,
         id: i32,
         len: Option<usize>,
-    ) -> Result<OutgoingPacket<'a, W>, Error> {
+    ) -> Result<OutgoingPacket<'_, W>, Error> {
         let id = VarInt(id);
         let mut packet = OutgoingInnerPacket::new(
             &mut self.conn,
