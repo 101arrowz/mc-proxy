@@ -14,7 +14,7 @@ use std::{
     future::Future,
     io::{Cursor, IoSlice},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf},
@@ -62,7 +62,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                     if reader.get_ref().get_ref().get_ref().remaining() == 0 {
                         Ok(true)
                     } else {
-                        return Err(ProtocolError::Malformed.into());
+                        Err(ProtocolError::Malformed.into())
                     }
                 } else {
                     let mut buf = Vec::with_capacity(reader.remaining());
@@ -70,7 +70,7 @@ impl<R: AsyncReadExt + Unpin> IncomingInnerPacket<R> {
                     if reader.get_ref().get_ref().get_ref().remaining() == 0 {
                         Ok(false)
                     } else {
-                        return Err(ProtocolError::Malformed.into());
+                        Err(ProtocolError::Malformed.into())
                     }
                 }
             }
@@ -340,7 +340,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
             } => Poll::Ready(if *shutting_down {
                 Ok(0)
             } else {
-                match ready!(Pin::new(vec).poll_write(cx, buf)) {
+                match Pin::new(vec).poll_write(cx, buf).ready()? {
                     Ok(bytes_written) => {
                         *len += bytes_written;
                         if *len > 2097151 {
@@ -413,11 +413,11 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    ready!(Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]))?;
+                    Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]).ready()??;
                     *shutting_down = true;
                 }
                 while *len != 0 {
-                    match ready!(Pin::new(&mut *tgt).poll_write(cx, &vec[vec.len() - *len..])) {
+                    match Pin::new(&mut *tgt).poll_write(cx, &vec[vec.len() - *len..]).ready()? {
                         Ok(bytes_written) => *len -= bytes_written,
                         Err(err) => return Poll::Ready(Err(err)),
                     }
@@ -439,7 +439,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         Error::IncompletePacket,
                     )));
                 }
-                ready!(Pin::new(&mut *vec).poll_flush(cx))?;
+                Pin::new(&mut *vec).poll_flush(cx).ready()??;
                 let use_cache = cache.len() < cache.capacity();
                 let compressed = if use_cache {
                     cache
@@ -477,14 +477,13 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    ready!(Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]))?;
+                    Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]).ready()??;
                     *len = compressed.len();
                     *shutting_down = true;
                 }
                 while *len != 0 {
                     *len -=
-                        ready!(Pin::new(&mut *tgt)
-                            .poll_write(cx, &compressed[compressed.len() - *len..]))?;
+                        Pin::new(&mut *tgt).poll_write(cx, &compressed[compressed.len() - *len..]).ready()??;
                 }
                 Poll::Ready(Ok(()))
             }
@@ -529,11 +528,11 @@ impl<W: AsyncWriteExt + Unpin> OutboundConnection<W> {
         }
     }
 
-    pub async fn create_packet<'a>(
-        &'a mut self,
+    pub async fn create_packet(
+        &mut self,
         id: i32,
         len: Option<usize>,
-    ) -> Result<OutgoingPacket<'a, W>, Error> {
+    ) -> Result<OutgoingPacket<'_, W>, Error> {
         let id = VarInt(id);
         let mut packet = OutgoingInnerPacket::new(
             &mut self.conn,

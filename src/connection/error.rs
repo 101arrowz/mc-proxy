@@ -9,19 +9,19 @@ pub enum Error {
     #[error("invalid target")]
     InvalidTarget,
     #[error("I/O error")]
-    IOError(#[from] IOError),
+    IO(#[from] IOError),
     #[error("invalid protocol state")]
     InvalidState,
     #[error("protocol error")]
-    ProtocolError(#[from] ProtocolError),
+    Protocol(#[from] ProtocolError),
     #[error("disconnected")]
-    Disconnected(Chat<'static>),
+    Disconnected(Box<Chat<'static>>),
     #[error("no credentials")]
     NoCredentials,
     #[error("HTTP error")]
-    HTTPError(#[from] HTTPError),
+    HTTP(#[from] HTTPError),
     #[error("web error")]
-    WebError(#[from] WebError),
+    Web(#[from] WebError),
     #[error("packet too big")]
     PacketTooBig(usize),
     #[error("invalid packet size")]

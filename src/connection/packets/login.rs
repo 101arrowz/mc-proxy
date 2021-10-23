@@ -39,6 +39,7 @@ pub struct Player<'a> {
 }
 
 impl Client {
+    #[allow(clippy::type_complexity)]
     pub const NO_LOGIN_PLUGIN_HANDLER: fn(Cow<str>, Vec<u8>) -> Ready<Option<Vec<u8>>> =
         |_, _| ready(None);
     pub async fn login<'a, P: Future<Output = Option<impl AsRef<[u8]>>>>(
@@ -65,9 +66,9 @@ impl Client {
                 match packet.id {
                     0 => {
                         break Err(Error::Disconnected(
-                            Chat::decode(&mut packet.content, self.version)
+                            Box::new(Chat::decode(&mut packet.content, self.version)
                                 .await?
-                                .into_owned(),
+                                .into_owned()),
                         ));
                     }
                     1 => {
@@ -167,7 +168,7 @@ impl Client {
                         const RSA_OID: ObjectIdentifier =
                             ObjectIdentifier::new("1.2.840.113549.1.1.1");
                         if spki.algorithm.oid != RSA_OID {
-                            Err(ProtocolError::Malformed)?;
+                            return Err(ProtocolError::Malformed.into());
                         }
                         let public_key = RsaPublicKey::from_pkcs1_der(spki.subject_public_key)
                             .map_err(|_| ProtocolError::Malformed)?;
@@ -208,7 +209,7 @@ impl Client {
                         if !self.inbound.conn.set_key(shared_secret)
                             || !self.outbound.conn.set_key(shared_secret)
                         {
-                            Err(ProtocolError::Malformed)?;
+                            return Err(ProtocolError::Malformed.into());
                         }
                     }
                     2 => {
@@ -251,7 +252,7 @@ impl Client {
                         let mut buf = Vec::with_capacity(bytes_remaining);
                         packet.content.read_to_end(&mut buf).await?;
                         if buf.len() != bytes_remaining {
-                            Err(ProtocolError::Malformed)?
+                            return Err(ProtocolError::Malformed.into());
                         }
                         if let Some(response_data) = plugin_handler(channel, buf).await {
                             let response_data = response_data.as_ref();
@@ -277,7 +278,7 @@ impl Client {
                             response_packet.shutdown().await?;
                         }
                     }
-                    _ => Err(ProtocolError::Malformed)?,
+                    _ => return Err(ProtocolError::Malformed.into()),
                 }
             }
         } else {
@@ -313,7 +314,7 @@ impl ServerConnection {
         if self.state == State::Login {
             let mut packet = self.inbound.next_packet().await?;
             if packet.id != 0 {
-                Err(ProtocolError::Malformed)?;
+                return Err(ProtocolError::Malformed.into());
             }
             let client_username =
                 LengthCappedString::<16>::decode(&mut packet.content, self.version)

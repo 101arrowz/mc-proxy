@@ -13,9 +13,12 @@ use std::{borrow::Cow, future::Future};
 
 #[derive(Clone, Debug, Deserialize)]
 pub enum ErrorKind {
-    ForbiddenOperationException,
-    IllegalArgumentException,
-    ResourceException,
+    #[serde(rename = "ForbiddenOperationException")]
+    ForbiddenOperation,
+    #[serde(rename = "IllegalArgumentException")]
+    IllegalArgument,
+    #[serde(rename = "ResourceException")]
+    Resource,
 }
 
 #[derive(Clone, Debug, Deserialize, thiserror::Error)]

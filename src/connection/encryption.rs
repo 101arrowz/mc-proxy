@@ -6,7 +6,7 @@ use cfb8::{
 use std::{
     cmp::min,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
@@ -45,9 +45,7 @@ impl<W: AsyncWrite + Unpin> Encryptor<W> {
     fn flush_buffer(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         if self.cipher.is_some() {
             while self.pos != self.cap {
-                self.pos += ready!(
-                    Pin::new(&mut self.tgt).poll_write(cx, &self.buffer[self.pos..self.cap])
-                )?;
+                self.pos += Pin::new(&mut self.tgt).poll_write(cx, &self.buffer[self.pos..self.cap]).ready()??;
             }
         }
         Poll::Ready(Ok(()))
@@ -61,7 +59,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for Encryptor<W> {
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         if self.cipher.is_some() {
-            ready!(self.flush_buffer(cx))?;
+            self.flush_buffer(cx).ready()??;
             self.pos = 0;
             let cap = min(buf.len(), BUFFER_SIZE);
             self.cap = cap;
@@ -88,7 +86,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for Encryptor<W> {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        ready!(self.flush_buffer(cx))?;
+        self.flush_buffer(cx).ready()??;
         Pin::new(&mut self.tgt).poll_shutdown(cx)
     }
 }

@@ -1,6 +1,8 @@
 #![feature(type_alias_impl_trait)]
 #![feature(generic_associated_types)]
+#![feature(poll_ready)]
 #![feature(iter_intersperse)]
+#![allow(clippy::upper_case_acronyms)]
   
 mod connection;
 mod protocol;
@@ -120,8 +122,7 @@ pub async fn start(username: String, password: String, api_key: String) -> Resul
                                         .await?;
                                         let msg = &orig_msg.0;
                                         packet.content.finished()?;
-                                        if msg.starts_with("/stats ") {
-                                            let unames = &msg[7..];
+                                        if let Some(unames) = msg.strip_prefix("/stats ") {
                                             let players = if unames == "*" {
                                                 all_local_players
                                                     .lock().unwrap()

@@ -6,11 +6,11 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("HTTP error")]
-    HTTPError(#[from] HTTPError),
+    HTTP(#[from] HTTPError),
     #[error("Yggdrasil error")]
-    YggdrasilError(#[from] YggdrasilError),
+    Yggdrasil(#[from] YggdrasilError),
     #[error("Hypixel error")]
-    HypixelError(#[from] HypixelError),
+    Hypixel(#[from] HypixelError),
     #[error("no access token")]
     NoAccessToken,
 }

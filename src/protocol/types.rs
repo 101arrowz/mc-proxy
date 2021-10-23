@@ -613,6 +613,7 @@ impl ChatClickEvent<'_> {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "action", content = "value")]
+#[allow(clippy::enum_variant_names)]
 pub enum ChatHoverEvent<'a> {
     ShowText(Box<Chat<'a>>),
     // TODO: Serialize and deserialize JSON-NBT
@@ -750,6 +751,7 @@ impl ChatObject<'_> {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum Chat<'a> {
     Raw(Cow<'a, str>),
     Array(Vec<Chat<'a>>),
