@@ -762,8 +762,12 @@ impl Chat<'_> {
         match self {
             Chat::Object(object) => {
                 if let Some(extra) = &mut object.extra {
-                    for chat in extra {
-                        chat.fix_version(version);
+                    if extra.is_empty() {
+                        object.extra = None;
+                    } else {
+                        for chat in extra {
+                            chat.fix_version(version);
+                        }
                     }
                 }
                 if let ChatValue::Translate { with, .. } = &mut object.value {
@@ -799,8 +803,12 @@ impl Chat<'_> {
                 }
             }
             Chat::Array(array) => {
-                for chat in array {
-                    chat.fix_version(version);
+                if array.is_empty() {
+                    *self = Chat::Raw(Cow::Borrowed(""));
+                } else {
+                    for chat in array {
+                        chat.fix_version(version);
+                    }
                 }
             }
             _ => {}
@@ -823,7 +831,7 @@ decode_impl!(Chat<'a>, src, version, {
 
 encode_impl!(Chat<'a>, self, tgt, version, {
     self.fix_version(version);
-    let chat: LengthCappedString<262144> = serde_json::to_string(&self)
+    let chat: LengthCappedString<262144> = serde_json::to_string(&dbg!(self))
         .map_err(|_| Error::Malformed)?
         .try_into()?;
     chat.encode(tgt, version).await

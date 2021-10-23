@@ -3,7 +3,7 @@ This is a fully functional proxy for online and offline-mode Minecraft servers. 
 
 The codebase contains both a client and a server. Packets received by the server are forwarded to the client, and vice versa, but packets can be intercepted and/or rewritten dynamically. The server does not support compression or online-mode and there are no plans to add this, since it would only reduce performance, though implementing it is possible if desired. Although the client does not currently supports only Mojang authentication (accounts migrated to Microsoft will not work), adding support for Microsoft is planned.
 
-The default implementation in `main.rs` adds a stat checker for Hypixel. The binary must currently be called with your Minecraft username, password, and Hypixel API key as command line arguments (very secure, I know).
+The default implementation in `lib.rs` adds a stat checker for Hypixel. The binary must currently be called with your Minecraft username, password, and Hypixel API key as environment variables (very secure, I know). There's a WIP GUI wrapper written with Tauri in `src-tauri`.
 
 The main purpose of this particular project is proxying and adding custom command support, but it is generic enough to support a wide variety of network-level plugins, which work on any Minecraft client. Since this codebase implements packet parsing and authentication from scratch, feel free to fork it and do whatever you want with the core architecture. 
 

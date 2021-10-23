@@ -88,9 +88,8 @@ impl Client {
                         packet.content.read_exact(&mut verify_token).await?;
                         packet.content.finished()?;
                         let mut hasher = Sha1::new();
-                        let mut rng = thread_rng();
                         let mut shared_secret = [0; 16];
-                        rng.fill(&mut shared_secret);
+                        thread_rng().fill(&mut shared_secret);
                         hasher.update(server_id.0.as_bytes());
                         hasher.update(shared_secret);
                         hasher.update(&public_key_bytes);
@@ -173,10 +172,10 @@ impl Client {
                         let public_key = RsaPublicKey::from_pkcs1_der(spki.subject_public_key)
                             .map_err(|_| ProtocolError::Malformed)?;
                         let encrypted_shared_secret = public_key
-                            .encrypt(&mut rng, PaddingScheme::PKCS1v15Encrypt, &shared_secret)
+                            .encrypt(&mut thread_rng(), PaddingScheme::PKCS1v15Encrypt, &shared_secret)
                             .map_err(|_| ProtocolError::Malformed)?;
                         let encrypted_verify_token = public_key
-                            .encrypt(&mut rng, PaddingScheme::PKCS1v15Encrypt, &verify_token)
+                            .encrypt(&mut thread_rng(), PaddingScheme::PKCS1v15Encrypt, &verify_token)
                             .map_err(|_| ProtocolError::Malformed)?;
 
                         let encrypted_shared_secret_len =
