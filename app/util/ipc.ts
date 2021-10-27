@@ -1,5 +1,11 @@
-import { invoke } from '@tauri-apps/api';
+import { invoke, InvokeArgs } from '@tauri-apps/api/tauri';
 
-export function begin() {
-    return invoke<void>('begin');
+interface BeginProxyOptions {
+    username?: string;
+    password?: string;
+    apiKey?: string;
+}
+
+export function begin(opts?: BeginProxyOptions) {
+    return invoke<void>('begin', opts as InvokeArgs);
 }

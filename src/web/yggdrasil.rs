@@ -64,7 +64,7 @@ struct AuthenticationRequest<'a> {
 
 #[derive(Debug, Clone)]
 pub struct AuthenticationResponse<'a> {
-    pub user_info: UserInfo<'a>,
+    pub user_info: UserInfo<'static>,
     pub access_token: &'a str,
 }
 
@@ -93,8 +93,8 @@ struct RefreshRequest<'a> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
-enum RawAuthenticationResponse<'a> {
-    Success(LocalAuthenticationResponse<'a>),
+enum RawAuthenticationResponse {
+    Success(LocalAuthenticationResponse<'static>),
     Failure(Error),
 }
 

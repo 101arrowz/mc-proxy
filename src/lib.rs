@@ -33,13 +33,39 @@ use crate::{
     web::{hypixel::Hypixel, mojang::Mojang},
 };
 
-pub async fn start(username: String, password: String, api_key: String) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+pub enum StartConfig {
+    Login { username: String, password: String },
+    Access { access_token: String }
+}
+
+const CLIENT_NAME: &str = "mc-proxy";
+
+pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let listener = TcpListener::bind("localhost:25565").await?;
+    let web_client = HTTPClient::new();
+    let mut auth: Authentication;
+    let user_info = match config {
+        StartConfig::Login { username, password } => {
+            auth = Authentication::new(Some(CLIENT_NAME), None, Some(web_client.clone()));
+            auth
+                .authenticate(&username, &password)
+                .await?
+                .user_info
+        },
+        StartConfig::Access { access_token } => {
+            auth = Authentication::new(Some(CLIENT_NAME), Some(access_token.into()), Some(web_client.clone()));
+            auth
+                .refresh_access_token()
+                .await?
+                .user_info
+        }
+    };
     loop {
         let conn = listener.accept().await?.0;
-        let username = username.clone();
-        let password = password.clone();
         let api_key = api_key.clone();
+        let web_client = web_client.clone();
+        let user_info = user_info.clone();
+        let auth = auth.clone();
         tokio::spawn(async move {
             if let Err(err) = async {
                 let mut conn = ServerConnection::new(conn).await;
@@ -63,13 +89,7 @@ pub async fn start(username: String, password: String, api_key: String) -> Resul
                         out_packet.shutdown().await?;
                     }
                 } else {
-                    let web_client = HTTPClient::new();
-                    let mut auth =
-                        Authentication::new(Some("my_client_name"), None, Some(web_client.clone()));
-                    let UserInfo { name, id } = auth
-                        .authenticate(&username, &password)
-                        .await?
-                        .user_info;
+                    let UserInfo { name, id } = user_info;
                     conn.accept_login(|_| async {
                         Ok(ServerLoginCredentials::OfflineMode(Player {
                             username: Cow::Borrowed(&name),
