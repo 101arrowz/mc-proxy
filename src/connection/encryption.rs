@@ -65,15 +65,14 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for Encryptor<W> {
             self.pos = 0;
             let cap = min(buf.len(), BUFFER_SIZE);
             self.cap = cap;
-            // extra buffer to avoid double &mut self
-            let mut encrypted_buffer = [0; BUFFER_SIZE];
-            encrypted_buffer[..cap].copy_from_slice(&buf[..cap]);
-            self.cipher
+            let this = self.get_mut();
+            let buffer = &mut this.buffer[..cap];
+            buffer.copy_from_slice(&buf[..cap]);
+            this.cipher
                 .as_mut()
                 .unwrap()
-                .encrypt(&mut encrypted_buffer[..cap]);
-            self.buffer[..cap].copy_from_slice(&encrypted_buffer[..cap]);
-            let _ = self.flush_buffer(cx)?;
+                .encrypt(buffer);
+            let _ = this.flush_buffer(cx)?;
             Poll::Ready(Ok(cap))
         } else {
             Pin::new(&mut self.tgt).poll_write(cx, buf)
