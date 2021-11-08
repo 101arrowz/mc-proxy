@@ -1,0 +1,26 @@
+{
+  "name": "mc-proxy",
+  "version": "0.0.1",
+  "description": "Minecraft Proxy UI",
+  "repository": "https://github.com/101arrowz/mc-proxy",
+  "author": "Arjun Barrett",
+  "license": "MIT",
+  "devDependencies": {
+    "@emotion/react": "^11.5.0",
+    "@types/react": "^17.0.31",
+    "@types/react-dom": "^17.0.10",
+    "parcel": "^2.0.0",
+    "typescript": "^4.4.4"
+  },
+  "scripts": {
+    "start": "cargo tauri dev",
+    "start/ui": "parcel app/index.html",
+    "build": "cargo tauri build",
+    "build/ui": "parcel build app/index.html"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^1.0.0-beta.8",
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2"
+  }
+}
