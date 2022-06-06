@@ -28,13 +28,11 @@
       "shortDescription": "",
       "longDescription": "",
       "deb": {
-        "depends": [],
-        "useBootstrapper": false
+        "depends": []
       },
       "macOS": {
         "frameworks": [],
         "minimumSystemVersion": "",
-        "useBootstrapper": false,
         "exceptionDomain": "",
         "signingIdentity": null,
         "entitlements": null
@@ -62,6 +60,7 @@
       {
         "label": "ms-oauth2",
         "title": "Microsoft Login",
+        "url": "about:blank",
         "visible": false,
         "resizable": false
       }

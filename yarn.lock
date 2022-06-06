@@ -980,10 +980,12 @@
   resolved "https://registry.yarnpkg.com/@swc/helpers/-/helpers-0.2.13.tgz#95d69aaed0998040d455832efbe1342ed79d0809"
   integrity sha512-HxfZHtTgDlME7fH+KIwBrm1B1+2iB3UpbcSbPCZzDAHxZ3z+qfjflHverm33sXrdyQYx4s3J7r6ot76433mwEg==
 
-"@tauri-apps/api@^1.0.0-beta.8":
-  version "1.0.0-beta.8"
-  resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-1.0.0-beta.8.tgz#a43dc4a4515148f29bfb616db85445b771e84f78"
-  integrity sha512-a56lXB7XvQ4+fKtT0pxpkjTSKhyrQ1Vmjyvt2ox3mT9xw3l7s8IOKHJ1WuqW6TA6xdoy3Cyja3Z3prw8hflS7g==
+"@tauri-apps/api@^1.0.0-rc.6":
+  version "1.0.0-rc.6"
+  resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-1.0.0-rc.6.tgz#6c3358bc8c2cba705d52c1194e2d340cedf1697a"
+  integrity sha512-/PbVs3/dUzid0/1XbML8tAkRSOmp+6Gv9ql02HGt3aIjNTvaL2902qEbiTX6xK++3oUoKJJ88t+V6IiNd1JUkw==
+  dependencies:
+    type-fest "2.12.2"
 
 "@trysound/sax@0.2.0":
   version "0.2.0"
@@ -4429,6 +4431,11 @@ type-check@~0.3.2:
   integrity sha1-WITKtRLPHTVeP7eE8wgEsrUg23I=
   dependencies:
     prelude-ls "~1.1.2"
+
+type-fest@2.12.2:
+  version "2.12.2"
+  resolved "https://registry.yarnpkg.com/type-fest/-/type-fest-2.12.2.tgz#80a53614e6b9b475eb9077472fb7498dc7aa51d0"
+  integrity sha512-qt6ylCGpLjZ7AaODxbpyBZSs9fCI9SkL3Z9q2oxMBQhs/uyY+VD8jHA8ULCGmWQJlBgqvO3EJeAngOHD8zQCrQ==
 
 type-fest@^0.20.2:
   version "0.20.2"

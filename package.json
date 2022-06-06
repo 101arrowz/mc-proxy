@@ -19,7 +19,7 @@
     "build/ui": "parcel build app/index.html"
   },
   "dependencies": {
-    "@tauri-apps/api": "^1.0.0-beta.8",
+    "@tauri-apps/api": "^1.0.0-rc.6",
     "react": "^17.0.2",
     "react-dom": "^17.0.2"
   }

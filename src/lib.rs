@@ -17,15 +17,15 @@ use connection::{
 };
 use protocol::error::Error as ProtocolError;
 use reqwest::Client as HTTPClient;
-use std::{borrow::Cow, error::Error, io::Cursor, sync::Mutex};
+use std::{borrow::Cow, error::Error, io::Cursor, sync::Mutex, collections::HashMap};
 use tokio::{
     io::{copy, AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     try_join,
 };
 use unicase::Ascii;
-use web::yggdrasil;
 use web::microsoft;
+use web::yggdrasil;
 
 use crate::{
     protocol::types::{
@@ -43,7 +43,7 @@ pub enum StartConfig {
 #[derive(Debug, Clone)]
 enum AuthConfig<'a> {
     Yggdrasil(yggdrasil::Authentication<'a>, yggdrasil::UserInfo<'a>),
-    Microsoft(microsoft::Authentication<'a>, microsoft::UserInfo<'a>)
+    Microsoft(microsoft::Authentication<'a>, microsoft::UserInfo<'a>),
 }
 
 const CLIENT_NAME: &str = "mc-proxy";
@@ -54,20 +54,26 @@ pub async fn start(
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let listener = TcpListener::bind("localhost:25565").await?;
     let web_client = HTTPClient::new();
-    let auth_config: AuthConfig<'_>;
-
-   match config {
+    let mut auth_config: AuthConfig<'_>;
+    let config = dbg!(config);
+    match config {
         StartConfig::Yggdrasil { username, password } => {
-            let mut auth = yggdrasil::Authentication::new(Some(CLIENT_NAME), None, Some(web_client.clone()));
+            let mut auth =
+                yggdrasil::Authentication::new(Some(CLIENT_NAME), None, Some(web_client.clone()));
             let info = auth.authenticate(&username, &password).await?.user_info;
             auth_config = AuthConfig::Yggdrasil(auth, info);
         }
         StartConfig::Microsoft { access_token } => {
-            let mut auth = microsoft::Authentication::new(Cow::Owned(access_token), None, Some(web_client.clone()));
+            let mut auth = microsoft::Authentication::new(
+                Cow::Owned(access_token),
+                None,
+                Some(web_client.clone()),
+            );
             let info = auth.get_info().await?;
             auth_config = AuthConfig::Microsoft(auth, info);
         }
     };
+    auth_config = dbg!(auth_config);
     loop {
         let conn = listener.accept().await?.0;
         let api_key = api_key.clone();
@@ -122,7 +128,7 @@ pub async fn start(
                                     Client::NO_LOGIN_PLUGIN_HANDLER,
                                 )
                                 .await?;
-                        },
+                        }
                         AuthConfig::Microsoft(auth, _) => {
                             client
                                 .login(
@@ -137,7 +143,7 @@ pub async fn start(
                                     Client::NO_LOGIN_PLUGIN_HANDLER,
                                 )
                                 .await?;
-                        },
+                        }
                     };
 
                     let Client {
@@ -150,6 +156,7 @@ pub async fn start(
                     let send_to_client = Mutex::new(Vec::new());
                     let all_local_players =
                         Mutex::new(BiHashMap::<UUID, Ascii<Cow<'_, str>>>::new());
+                    let pings = Mutex::new(HashMap::<UUID, i32>::new());
                     let ServerConnection {
                         inbound: server_inbound,
                         outbound: server_outbound,
@@ -348,6 +355,103 @@ pub async fn start(
                                                     }
                                                 }
                                             }
+                                        } else if msg == "/ping" || msg.starts_with("/ping ") {
+                                            let unames = &msg[5..];
+                                            let players = if unames == "" {
+                                                vec![(Some(id), Cow::Borrowed(name))]
+                                            } else if unames == " *" {
+                                                all_local_players
+                                                    .lock()
+                                                    .unwrap()
+                                                    .iter()
+                                                    .map(|(&uuid, v)| {
+                                                        (Some(uuid), Cow::Owned(v.as_ref().into()))
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            } else {
+                                                unames
+                                                    .split(' ')
+                                                    .skip(1)
+                                                    .map(|uname| {
+                                                        (all_local_players
+                                                            .lock()
+                                                            .unwrap()
+                                                            .get_by_right(&Ascii::new(
+                                                                uname.into(),
+                                                            ))
+                                                            .copied(),
+                                                        Cow::Borrowed(uname))
+                                                    })
+                                                    .collect()
+                                            };
+                                            let results = join_all(players.into_iter().map(|player| {
+                                                let hypixel = &hypixel;
+                                                let send_to_client = &send_to_client;
+                                                let pings = &pings;
+                                                let mojang = &mojang;
+                                                let mut uuid = player.0;
+                                                let mut player = player.1.into_owned();
+                                                async move {
+                                                    if uuid.is_none() {
+                                                        uuid = mojang
+                                                            .get_uuid(&player)
+                                                            .await
+                                                            .ok()
+                                                            .map(|(uuid, name)| {
+                                                                player = name;
+                                                                uuid
+                                                            });
+                                                    }
+                                                    let mut ping = None;
+                                                    let mut player_info = None;
+                                                    if let Some(uuid) = uuid {
+                                                        ping = pings.lock().unwrap().get(&uuid).copied();
+                                                        player_info = hypixel.info(uuid).await?;
+                                                    }
+                                                    send_to_client.lock().unwrap().push(
+                                                        Chat::Array(vec![
+                                                            if let Some(ref player_info) = player_info {
+                                                                player_info.into()
+                                                            } else {
+                                                                Chat::Raw(format!("§4[NICKED] {}", player).into())
+                                                            },
+                                                            Chat::Object(ChatObject {
+                                                                color: Some(Color::Reset),
+                                                                value: ChatValue::Text {
+                                                                    text: ": ".into(),
+                                                                },
+                                                                ..Default::default()
+                                                            }),
+                                                            if let Some(ping) = ping {
+                                                                Chat::Object(ChatObject {
+                                                                    color: Some(if ping < 50 {
+                                                                        Color::DarkGreen
+                                                                    } else if ping < 100 {
+                                                                        Color::Green
+                                                                    } else if ping < 200 {
+                                                                        Color::Yellow
+                                                                    } else {
+                                                                        Color::Red
+                                                                    }),
+                                                                    value: ChatValue::Text {
+                                                                        text: format!("{}ms", ping).into(),
+                                                                    },
+                                                                    ..Default::default()
+                                                                })
+                                                            } else {
+                                                                Chat::Raw("Unknown".into())
+                                                            }
+                                                        ])
+                                                    );
+                                                    Ok::<
+                                                        (),
+                                                        Box<dyn Error + Send + Sync + 'static>,
+                                                    >(())
+                                                }
+                                            })).await;
+                                            for result in results {
+                                                result?;
+                                            }
                                         } else {
                                             let mut out_packet = outbound
                                                 .create_packet(packet.id, Some(packet.len))
@@ -402,10 +506,6 @@ pub async fn start(
                                                     )
                                                     .await?
                                                     .0;
-                                                    all_local_players
-                                                        .lock()
-                                                        .unwrap()
-                                                        .insert(uuid, Ascii::new(name));
                                                     for _ in
                                                         0..VarInt::decode(&mut content, version)
                                                             .await?
@@ -432,16 +532,26 @@ pub async fn start(
                                                         }
                                                     }
                                                     VarInt::decode(&mut content, version).await?;
-                                                    VarInt::decode(&mut content, version).await?;
+                                                    let ping = VarInt::decode(&mut content, version).await?.0;
                                                     if bool::decode(&mut content, version).await? {
                                                         Chat::decode(&mut content, version).await?;
                                                     }
+                                                    pings.lock().unwrap().insert(uuid, ping);
+                                                    all_local_players
+                                                        .lock()
+                                                        .unwrap()
+                                                        .insert(uuid, Ascii::new(name));
+                                                }
+                                                2 => {
+                                                    let ping = VarInt::decode(&mut content, version).await?.0;
+                                                    pings.lock().unwrap().insert(uuid, ping);
                                                 }
                                                 4 => {
                                                     all_local_players
                                                         .lock()
                                                         .unwrap()
                                                         .remove_by_left(&uuid);
+                                                    pings.lock().unwrap().remove(&uuid);
                                                 }
                                                 _ => {}
                                             }

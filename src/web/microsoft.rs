@@ -6,7 +6,7 @@ use crate::{
     },
     protocol::types::{serde_raw_uuid, UUID},
 };
-use reqwest::{Client};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, future::Future};
 
@@ -51,52 +51,52 @@ impl Authentication<'_> {
             struct XboxLiveRequestProperties<'a> {
                 auth_method: &'a str,
                 site_name: &'a str,
-                rps_ticket: &'a str
+                rps_ticket: &'a str,
             }
             #[derive(Debug, Clone, Serialize)]
             #[serde(rename_all = "PascalCase")]
             struct XboxLiveRequest<'a> {
                 properties: XboxLiveRequestProperties<'a>,
                 relying_party: &'a str,
-                token_type: &'a str
+                token_type: &'a str,
             }
-            
+
             #[derive(Debug, Clone, Deserialize)]
             struct XboxLiveResponseDisplayClaim {
-                uhs: String
+                uhs: String,
             }
 
             #[derive(Debug, Clone, Deserialize)]
             struct XboxLiveResponseDisplayClaims {
-                xui: Vec<XboxLiveResponseDisplayClaim>
+                xui: Vec<XboxLiveResponseDisplayClaim>,
             }
 
             #[derive(Debug, Clone, Deserialize)]
             #[serde(rename_all = "PascalCase")]
             struct XboxLiveResponse {
                 token: String,
-                display_claims: XboxLiveResponseDisplayClaims
+                display_claims: XboxLiveResponseDisplayClaims,
             }
 
             // TODO: refresh logic
 
-            let xbl_res: XboxLiveResponse = self.client
+            let xbl_res: XboxLiveResponse = self
+                .client
                 .post("https://user.auth.xboxlive.com/user/authenticate")
-                .header("Accept", "application/json")
                 .json(&XboxLiveRequest {
                     properties: XboxLiveRequestProperties {
                         auth_method: "RPS",
                         site_name: "user.auth.xboxlive.com",
-                        rps_ticket: &["d=", &self.access_token].concat()
+                        rps_ticket: &["d=", &self.access_token].concat(),
                     },
                     relying_party: "http://auth.xboxlive.com",
-                    token_type: "JWT"
+                    token_type: "JWT",
                 })
                 .send()
                 .await?
                 .json()
                 .await?;
-            
+
             #[derive(Debug, Clone, Serialize)]
             #[serde(rename_all = "PascalCase")]
             struct XSTSRequestProperties<'a> {
@@ -109,7 +109,7 @@ impl Authentication<'_> {
             struct XSTSRequest<'a> {
                 properties: XSTSRequestProperties<'a>,
                 relying_party: &'a str,
-                token_type: &'a str
+                token_type: &'a str,
             }
 
             #[derive(Debug, Clone, Deserialize)]
@@ -118,16 +118,17 @@ impl Authentication<'_> {
                 token: String,
             }
 
-            let xsts_res: XSTSResponse = self.client
+            let xsts_res: XSTSResponse = self
+                .client
                 .post("https://xsts.auth.xboxlive.com/xsts/authorize")
                 .header("Accept", "application/json")
                 .json(&XSTSRequest {
                     properties: XSTSRequestProperties {
                         sandbox_id: "RETAIL",
-                        user_tokens: [&xbl_res.token]
+                        user_tokens: [&xbl_res.token],
                     },
                     relying_party: "rp://api.minecraftservices.com/",
-                    token_type: "JWT"
+                    token_type: "JWT",
                 })
                 .send()
                 .await?
@@ -137,7 +138,7 @@ impl Authentication<'_> {
             #[derive(Debug, Clone, Serialize)]
             #[serde(rename_all = "camelCase")]
             struct MinecraftRequest<'a> {
-                identity_token: &'a str
+                identity_token: &'a str,
             }
 
             #[derive(Debug, Clone, Deserialize)]
@@ -145,10 +146,17 @@ impl Authentication<'_> {
                 access_token: String,
             }
 
-            let mc_res: MinecraftResponse = self.client
+            let mc_res: MinecraftResponse = self
+                .client
                 .post("https://api.minecraftservices.com/authentication/login_with_xbox")
                 .json(&MinecraftRequest {
-                    identity_token: &["XBL3.0 x=", &xbl_res.display_claims.xui[0].uhs, ";", &xsts_res.token].concat()
+                    identity_token: &[
+                        "XBL3.0 x=",
+                        &xbl_res.display_claims.xui[0].uhs,
+                        ";",
+                        &xsts_res.token,
+                    ]
+                    .concat(),
                 })
                 .send()
                 .await?
@@ -163,7 +171,8 @@ impl Authentication<'_> {
     pub async fn get_info(&mut self) -> Result<UserInfo<'static>, WebError> {
         self.get_access_token().await?;
 
-        Ok(self.client
+        Ok(self
+            .client
             .get("https://api.minecraftservices.com/minecraft/profile")
             .bearer_auth(self.mc_access_token.as_ref().unwrap())
             .send()

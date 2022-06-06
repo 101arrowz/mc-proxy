@@ -7,7 +7,7 @@ use crate::protocol::{
 use rand::{thread_rng, Rng};
 use reqwest::Client as HTTPClient;
 use rsa::{
-    pkcs1::{der::Decodable, FromRsaPublicKey},
+    pkcs1::{der::Decodable, DecodeRsaPublicKey},
     pkcs8::{ObjectIdentifier, SubjectPublicKeyInfo},
     PaddingScheme, PublicKey, RsaPublicKey,
 };
