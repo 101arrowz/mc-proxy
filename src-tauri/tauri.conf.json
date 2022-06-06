@@ -58,6 +58,12 @@
         "height": 600,
         "resizable": true,
         "fullscreen": false
+      },
+      {
+        "label": "ms-oauth2",
+        "title": "Microsoft Login",
+        "visible": false,
+        "resizable": false
       }
     ],
     "security": {

@@ -55,7 +55,6 @@ struct AuthenticationRequestAgent<'a> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthenticationRequest<'a> {
-    // There is an agent, but is Minecraft by default
     username: &'a str,
     password: &'a str,
     client_token: Option<&'a str>,
@@ -116,10 +115,10 @@ impl Authentication<'_> {
         }
     }
 
-    pub async fn authenticate(
-        &mut self,
-        username: &str,
-        password: &str,
+    pub async fn authenticate<'a, 'b: 'a>(
+        &'b mut self,
+        username: &'a str,
+        password: &'a str,
     ) -> Result<AuthenticationResponse<'_>, WebError> {
         let res = self
             .client
@@ -213,19 +212,18 @@ impl OnlineMode<'_> {
 }
 
 impl Authenticator for OnlineMode<'_> {
-    type CredentialsOutput<'a> =
-        impl Future<Output = Result<LoginCredentials<'a>, ConnectionError>> + 'a;
+    type CredentialsOutput = impl Future<Output = Result<LoginCredentials, ConnectionError>>;
 
-    fn username(&mut self) -> &str {
+    fn username(&self) -> &str {
         &self.user_info.name
     }
 
-    fn credentials(&mut self) -> Self::CredentialsOutput<'_> {
+    fn credentials(mut self) -> Self::CredentialsOutput {
         async move {
             if let Some(access_token) = self.auth.get_access_token().await? {
                 Ok(LoginCredentials {
                     uuid: self.user_info.id,
-                    access_token,
+                    access_token: access_token.to_string(),
                 })
             } else {
                 Err(WebError::NoAccessToken.into())

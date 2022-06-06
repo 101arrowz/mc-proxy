@@ -21,15 +21,16 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug, Clone)]
-pub struct LoginCredentials<'a> {
-    pub access_token: &'a str,
+pub struct LoginCredentials {
+    pub access_token: String,
     pub uuid: UUID,
 }
 
 pub trait Authenticator {
-    type CredentialsOutput<'a>: Future<Output = Result<LoginCredentials<'a>, Error>>;
-    fn username(&mut self) -> &str;
-    fn credentials(&mut self) -> Self::CredentialsOutput<'_>;
+    type CredentialsOutput: Future<Output = Result<LoginCredentials, Error>>;
+
+    fn username(&self) -> &str;
+    fn credentials(self) -> Self::CredentialsOutput;
 }
 
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ impl Client {
     pub async fn login<'a, P: Future<Output = Option<impl AsRef<[u8]>>>>(
         &mut self,
         mut client: Option<HTTPClient>,
-        mut authenticator: impl Authenticator,
+        authenticator: impl Authenticator,
         mut plugin_handler: impl FnMut(Cow<'a, str>, Vec<u8>) -> P,
     ) -> Result<Player<'a>, Error> {
         if self.state == State::Login {
@@ -61,15 +62,16 @@ impl Client {
                     self.version,
                 )
                 .await?;
+            let mut authenticator = Some(authenticator);
             loop {
                 let mut packet = self.inbound.next_packet().await?;
                 match packet.id {
                     0 => {
-                        break Err(Error::Disconnected(
-                            Box::new(Chat::decode(&mut packet.content, self.version)
+                        break Err(Error::Disconnected(Box::new(
+                            Chat::decode(&mut packet.content, self.version)
                                 .await?
-                                .into_owned()),
-                        ));
+                                .into_owned(),
+                        )));
                     }
                     1 => {
                         let server_id =
@@ -137,7 +139,11 @@ impl Client {
                             server_id_index_start = 40;
                             server_id[40] = b'0';
                         }
-                        let credentials = authenticator.credentials().await?;
+                        let credentials = if let Some(auth) = authenticator.take() {
+                            auth.credentials().await?
+                        } else {
+                            return Err(Error::InvalidState);
+                        };
 
                         #[derive(Debug, Clone, Serialize, Deserialize)]
                         #[serde(rename_all = "camelCase")]
@@ -153,7 +159,7 @@ impl Client {
                             .unwrap_or_default()
                             .post("https://sessionserver.mojang.com/session/minecraft/join")
                             .json(&FullLoginCredentials {
-                                access_token: credentials.access_token,
+                                access_token: &credentials.access_token,
                                 selected_profile: credentials.uuid,
                                 server_id: unsafe {
                                     from_utf8_unchecked(&server_id[server_id_index_start..])
@@ -173,10 +179,18 @@ impl Client {
                         let public_key = RsaPublicKey::from_pkcs1_der(spki.subject_public_key)
                             .map_err(|_| ProtocolError::Malformed)?;
                         let encrypted_shared_secret = public_key
-                            .encrypt(&mut thread_rng(), PaddingScheme::PKCS1v15Encrypt, &shared_secret)
+                            .encrypt(
+                                &mut thread_rng(),
+                                PaddingScheme::PKCS1v15Encrypt,
+                                &shared_secret,
+                            )
                             .map_err(|_| ProtocolError::Malformed)?;
                         let encrypted_verify_token = public_key
-                            .encrypt(&mut thread_rng(), PaddingScheme::PKCS1v15Encrypt, &verify_token)
+                            .encrypt(
+                                &mut thread_rng(),
+                                PaddingScheme::PKCS1v15Encrypt,
+                                &verify_token,
+                            )
                             .map_err(|_| ProtocolError::Malformed)?;
 
                         let encrypted_shared_secret_len =
@@ -290,13 +304,13 @@ impl Client {
 pub struct OfflineMode<'a>(pub &'a str);
 
 impl Authenticator for OfflineMode<'_> {
-    type CredentialsOutput<'a> = Ready<Result<LoginCredentials<'a>, Error>>;
+    type CredentialsOutput = Ready<Result<LoginCredentials, Error>>;
 
-    fn username(&mut self) -> &str {
+    fn username(&self) -> &str {
         self.0
     }
 
-    fn credentials(&mut self) -> Self::CredentialsOutput<'_> {
+    fn credentials(self) -> Self::CredentialsOutput {
         ready(Err(Error::NoCredentials))
     }
 }

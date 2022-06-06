@@ -3,7 +3,7 @@
 #![feature(poll_ready)]
 #![feature(iter_intersperse)]
 #![allow(clippy::upper_case_acronyms)]
-  
+
 mod connection;
 mod protocol;
 mod web;
@@ -17,14 +17,15 @@ use connection::{
 };
 use protocol::error::Error as ProtocolError;
 use reqwest::Client as HTTPClient;
-use std::{borrow::Cow, sync::Mutex, error::Error, io::Cursor};
+use std::{borrow::Cow, error::Error, io::Cursor, sync::Mutex};
 use tokio::{
     io::{copy, AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     try_join,
 };
 use unicase::Ascii;
-use web::yggdrasil::{Authentication, OnlineMode, UserInfo};
+use web::yggdrasil;
+use web::microsoft;
 
 use crate::{
     protocol::types::{
@@ -33,39 +34,45 @@ use crate::{
     web::{hypixel::Hypixel, mojang::Mojang},
 };
 
+#[derive(Debug, Clone)]
 pub enum StartConfig {
-    Login { username: String, password: String },
-    Access { access_token: String }
+    Yggdrasil { username: String, password: String },
+    Microsoft { access_token: String },
+}
+
+#[derive(Debug, Clone)]
+enum AuthConfig<'a> {
+    Yggdrasil(yggdrasil::Authentication<'a>, yggdrasil::UserInfo<'a>),
+    Microsoft(microsoft::Authentication<'a>, microsoft::UserInfo<'a>)
 }
 
 const CLIENT_NAME: &str = "mc-proxy";
 
-pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+pub async fn start(
+    config: StartConfig,
+    api_key: String,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let listener = TcpListener::bind("localhost:25565").await?;
     let web_client = HTTPClient::new();
-    let mut auth: Authentication;
-    let user_info = match config {
-        StartConfig::Login { username, password } => {
-            auth = Authentication::new(Some(CLIENT_NAME), None, Some(web_client.clone()));
-            auth
-                .authenticate(&username, &password)
-                .await?
-                .user_info
-        },
-        StartConfig::Access { access_token } => {
-            auth = Authentication::new(Some(CLIENT_NAME), Some(access_token.into()), Some(web_client.clone()));
-            auth
-                .refresh_access_token()
-                .await?
-                .user_info
+    let auth_config: AuthConfig<'_>;
+
+   match config {
+        StartConfig::Yggdrasil { username, password } => {
+            let mut auth = yggdrasil::Authentication::new(Some(CLIENT_NAME), None, Some(web_client.clone()));
+            let info = auth.authenticate(&username, &password).await?.user_info;
+            auth_config = AuthConfig::Yggdrasil(auth, info);
+        }
+        StartConfig::Microsoft { access_token } => {
+            let mut auth = microsoft::Authentication::new(Cow::Owned(access_token), None, Some(web_client.clone()));
+            let info = auth.get_info().await?;
+            auth_config = AuthConfig::Microsoft(auth, info);
         }
     };
     loop {
         let conn = listener.accept().await?.0;
         let api_key = api_key.clone();
         let web_client = web_client.clone();
-        let user_info = user_info.clone();
-        let auth = auth.clone();
+        let auth_config = auth_config.clone();
         tokio::spawn(async move {
             if let Err(err) = async {
                 let mut conn = ServerConnection::new(conn).await;
@@ -89,7 +96,10 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                         out_packet.shutdown().await?;
                     }
                 } else {
-                    let UserInfo { name, id } = user_info;
+                    let (name, id) = match auth_config {
+                        AuthConfig::Yggdrasil(_, ref info) => (info.name.as_ref(), info.id),
+                        AuthConfig::Microsoft(_, ref info) => (info.name.as_ref(), info.id),
+                    };
                     conn.accept_login(|_| async {
                         Ok(ServerLoginCredentials::OfflineMode(Player {
                             username: Cow::Borrowed(&name),
@@ -97,19 +107,39 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                         }))
                     })
                     .await?;
-                    client
-                        .login(
-                            Some(web_client.clone()),
-                            OnlineMode::new(
-                                UserInfo {
-                                    name: Cow::Owned(name.into_owned()),
-                                    id,
-                                },
-                                auth,
-                            ),
-                            Client::NO_LOGIN_PLUGIN_HANDLER,
-                        )
-                        .await?;
+                    match auth_config {
+                        AuthConfig::Yggdrasil(auth, _) => {
+                            client
+                                .login(
+                                    Some(web_client.clone()),
+                                    yggdrasil::OnlineMode::new(
+                                        yggdrasil::UserInfo {
+                                            name: Cow::Borrowed(name),
+                                            id,
+                                        },
+                                        auth,
+                                    ),
+                                    Client::NO_LOGIN_PLUGIN_HANDLER,
+                                )
+                                .await?;
+                        },
+                        AuthConfig::Microsoft(auth, _) => {
+                            client
+                                .login(
+                                    Some(web_client.clone()),
+                                    microsoft::OnlineMode::new(
+                                        microsoft::UserInfo {
+                                            name: Cow::Borrowed(name),
+                                            id,
+                                        },
+                                        auth,
+                                    ),
+                                    Client::NO_LOGIN_PLUGIN_HANDLER,
+                                )
+                                .await?;
+                        },
+                    };
+
                     let Client {
                         inbound,
                         outbound,
@@ -118,7 +148,8 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                     } = &mut client;
                     let version = *version;
                     let send_to_client = Mutex::new(Vec::new());
-                    let all_local_players = Mutex::new(BiHashMap::<UUID, Ascii<Cow<'_, str>>>::new());
+                    let all_local_players =
+                        Mutex::new(BiHashMap::<UUID, Ascii<Cow<'_, str>>>::new());
                     let ServerConnection {
                         inbound: server_inbound,
                         outbound: server_outbound,
@@ -145,12 +176,29 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                         if let Some(unames) = msg.strip_prefix("/stats ") {
                                             let players = if unames == "*" {
                                                 all_local_players
-                                                    .lock().unwrap()
+                                                    .lock()
+                                                    .unwrap()
                                                     .iter()
-                                                    .map(|(&uuid, v)| (Some(uuid), Cow::Owned(v.as_ref().into())))
+                                                    .map(|(&uuid, v)| {
+                                                        (Some(uuid), Cow::Owned(v.as_ref().into()))
+                                                    })
                                                     .collect::<Vec<_>>()
                                             } else {
-                                                unames.split(' ').map(|uname| (all_local_players.lock().unwrap().get_by_right(&Ascii::new(uname.into())).copied(), Cow::Borrowed(uname))).collect()
+                                                unames
+                                                    .split(' ')
+                                                    .map(|uname| {
+                                                        (
+                                                            all_local_players
+                                                                .lock()
+                                                                .unwrap()
+                                                                .get_by_right(&Ascii::new(
+                                                                    uname.into(),
+                                                                ))
+                                                                .copied(),
+                                                            Cow::Borrowed(uname),
+                                                        )
+                                                    })
+                                                    .collect()
                                             };
                                             let good_players =
                                                 join_all(players.into_iter().map(|player| {
@@ -164,34 +212,55 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                                         let mut display = Vec::<Chat<'_>>::new();
                                                         let uuid_lookup = uuid.is_none();
                                                         if uuid_lookup {
-                                                            uuid = mojang.get_uuid(&player).await.ok().map(|(uuid, name)| {
-                                                                player = name;
-                                                                uuid
-                                                            });
+                                                            uuid = mojang
+                                                                .get_uuid(&player)
+                                                                .await
+                                                                .ok()
+                                                                .map(|(uuid, name)| {
+                                                                    player = name;
+                                                                    uuid
+                                                                });
                                                         }
                                                         let mut player_info = None;
                                                         let mut nicked = true;
                                                         if let Some(uuid) = uuid {
-                                                            if let Some(info) = hypixel.info(uuid).await? {
+                                                            if let Some(info) =
+                                                                hypixel.info(uuid).await?
+                                                            {
                                                                 nicked = false;
                                                                 let stats = &info.stats;
-                                                                if let Some(bw_stats) = &stats.bedwars {
+                                                                if let Some(bw_stats) =
+                                                                    &stats.bedwars
+                                                                {
                                                                     let fkdr = bw_stats
                                                                         .final_kills
                                                                         .map_or(0.0, |v| v as f64)
                                                                         / bw_stats
                                                                             .final_deaths
-                                                                            .map_or(1.0, |v| v as f64);
+                                                                            .map_or(1.0, |v| {
+                                                                                v as f64
+                                                                            });
                                                                     if fkdr > 2.0 {
-                                                                        out.push(format!(
-                                                                            "has {:.2} FKDR",
-                                                                            fkdr,
-                                                                        ).into());
+                                                                        out.push(
+                                                                            format!(
+                                                                                "has {:.2} FKDR",
+                                                                                fkdr,
+                                                                            )
+                                                                            .into(),
+                                                                        );
                                                                     }
-                                                                    display.push(Chat::Raw(format!("{:.2} FKDR", fkdr).into()));
+                                                                    display.push(Chat::Raw(
+                                                                        format!("{:.2} FKDR", fkdr)
+                                                                            .into(),
+                                                                    ));
                                                                 }
                                                                 player_info = Some(info);
-                                                            } else if uuid_lookup || mojang.get_uuid(&player).await.is_ok() {
+                                                            } else if uuid_lookup
+                                                                || mojang
+                                                                    .get_uuid(&player)
+                                                                    .await
+                                                                    .is_ok()
+                                                            {
                                                                 nicked = false;
                                                             }
                                                         }
@@ -201,29 +270,67 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                                         let out = if out.is_empty() {
                                                             None
                                                         } else {
-                                                            Some(format!("{} {}", &player, out.join(", ")))
+                                                            Some(format!(
+                                                                "{} {}",
+                                                                &player,
+                                                                out.join(", ")
+                                                            ))
                                                         };
                                                         send_to_client.lock().unwrap().push(
-                                                            if let Some(ref player_info) = player_info {
-                                                                Chat::Array(vec![player_info.into(), Chat::Object(ChatObject {
-                                                                    color: Some(Color::Reset),
-                                                                    value: ChatValue::Text { text: ": ".into() },
-                                                                    extra: Some(display.into_iter().intersperse(Chat::Raw(", ".into())).collect()),
-                                                                    ..Default::default()
-                                                                })])
+                                                            if let Some(ref player_info) =
+                                                                player_info
+                                                            {
+                                                                Chat::Array(vec![
+                                                                    player_info.into(),
+                                                                    Chat::Object(ChatObject {
+                                                                        color: Some(Color::Reset),
+                                                                        value: ChatValue::Text {
+                                                                            text: ": ".into(),
+                                                                        },
+                                                                        extra: Some(
+                                                                            display
+                                                                                .into_iter()
+                                                                                .intersperse(
+                                                                                    Chat::Raw(
+                                                                                        ", ".into(),
+                                                                                    ),
+                                                                                )
+                                                                                .collect(),
+                                                                        ),
+                                                                        ..Default::default()
+                                                                    }),
+                                                                ])
                                                             } else {
                                                                 Chat::Object(ChatObject {
-                                                                    color: Some(if nicked { Color::DarkRed } else { Color::Gray }),
-                                                                    value: ChatValue::Text { text: (if nicked { "[NICKED] " } else { "" }).into()  },
+                                                                    color: Some(if nicked {
+                                                                        Color::DarkRed
+                                                                    } else {
+                                                                        Color::Gray
+                                                                    }),
+                                                                    value: ChatValue::Text {
+                                                                        text: (if nicked {
+                                                                            "[NICKED] "
+                                                                        } else {
+                                                                            ""
+                                                                        })
+                                                                        .into(),
+                                                                    },
                                                                     extra: Some(vec![
                                                                         Chat::Raw(player.into()),
-                                                                        Chat::Raw("§r: Unknown".into()),
+                                                                        Chat::Raw(
+                                                                            "§r: Unknown".into(),
+                                                                        ),
                                                                     ]),
                                                                     ..Default::default()
                                                                 })
-                                                            }
+                                                            },
                                                         );
-                                                        Ok::<Option<String>, Box<dyn Error + Send + Sync + 'static>>(out)
+                                                        Ok::<
+                                                            Option<String>,
+                                                            Box<dyn Error + Send + Sync + 'static>,
+                                                        >(
+                                                            out
+                                                        )
                                                     }
                                                 }))
                                                 .await;
@@ -232,9 +339,11 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                                     if let Some(msg) = good_player? {
                                                         let mut out_packet =
                                                             outbound.create_packet(1, None).await?;
-                                                        LengthCappedString::<256>(format!("/pc {}", msg).into())
-                                                            .encode(&mut out_packet, version)
-                                                            .await?;
+                                                        LengthCappedString::<256>(
+                                                            format!("/pc {}", msg).into(),
+                                                        )
+                                                        .encode(&mut out_packet, version)
+                                                        .await?;
                                                         out_packet.shutdown().await?;
                                                     }
                                                 }
@@ -248,8 +357,9 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                         }
                                     }
                                     _ => {
-                                        let mut out_packet =
-                                            outbound.create_packet(packet.id, Some(packet.len)).await?;
+                                        let mut out_packet = outbound
+                                            .create_packet(packet.id, Some(packet.len))
+                                            .await?;
                                         copy(&mut packet.content, &mut out_packet).await?;
                                         packet.content.finished()?;
                                         out_packet.shutdown().await?;
@@ -266,7 +376,8 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                     // TODO: figure out why this is needed???
                                     chat
                                 } {
-                                    let mut out_packet = server_outbound.create_packet(2, None).await?;
+                                    let mut out_packet =
+                                        server_outbound.create_packet(2, None).await?;
                                     out_chat.encode(&mut out_packet, server_version).await?;
                                     1u8.encode(&mut out_packet, server_version).await?;
                                     out_packet.shutdown().await?;
@@ -292,11 +403,13 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                                     .await?
                                                     .0;
                                                     all_local_players
-                                                        .lock().unwrap()
+                                                        .lock()
+                                                        .unwrap()
                                                         .insert(uuid, Ascii::new(name));
-                                                    for _ in 0..VarInt::decode(&mut content, version)
-                                                        .await?
-                                                        .0
+                                                    for _ in
+                                                        0..VarInt::decode(&mut content, version)
+                                                            .await?
+                                                            .0
                                                     {
                                                         LengthCappedString::<32767>::decode(
                                                             &mut content,
@@ -308,7 +421,9 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                                             version,
                                                         )
                                                         .await?;
-                                                        if bool::decode(&mut content, version).await? {
+                                                        if bool::decode(&mut content, version)
+                                                            .await?
+                                                        {
                                                             LengthCappedString::<32767>::decode(
                                                                 &mut content,
                                                                 version,
@@ -323,7 +438,10 @@ pub async fn start(config: StartConfig, api_key: String) -> Result<(), Box<dyn E
                                                     }
                                                 }
                                                 4 => {
-                                                    all_local_players.lock().unwrap().remove_by_left(&uuid);
+                                                    all_local_players
+                                                        .lock()
+                                                        .unwrap()
+                                                        .remove_by_left(&uuid);
                                                 }
                                                 _ => {}
                                             }

@@ -45,7 +45,9 @@ impl<W: AsyncWrite + Unpin> Encryptor<W> {
     fn flush_buffer(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         if self.cipher.is_some() {
             while self.pos != self.cap {
-                self.pos += Pin::new(&mut self.tgt).poll_write(cx, &self.buffer[self.pos..self.cap]).ready()??;
+                self.pos += Pin::new(&mut self.tgt)
+                    .poll_write(cx, &self.buffer[self.pos..self.cap])
+                    .ready()??;
             }
         }
         Poll::Ready(Ok(()))
@@ -66,10 +68,7 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for Encryptor<W> {
             let this = self.get_mut();
             let buffer = &mut this.buffer[..cap];
             buffer.copy_from_slice(&buf[..cap]);
-            this.cipher
-                .as_mut()
-                .unwrap()
-                .encrypt(buffer);
+            this.cipher.as_mut().unwrap().encrypt(buffer);
             let _ = this.flush_buffer(cx)?;
             Poll::Ready(Ok(cap))
         } else {

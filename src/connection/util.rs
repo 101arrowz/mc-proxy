@@ -36,7 +36,9 @@ impl<R: AsyncReadExt + Unpin> AsyncRead for Limit<R> {
             Poll::Ready(Ok(()))
         } else {
             let mut capped_buf = buf.take(self.limit);
-            Pin::new(&mut self.stream).poll_read(cx, &mut capped_buf).ready()??;
+            Pin::new(&mut self.stream)
+                .poll_read(cx, &mut capped_buf)
+                .ready()??;
             let bytes_read = capped_buf.filled().len();
             self.limit -= bytes_read;
             let init_len = capped_buf.initialized().len();

@@ -268,14 +268,6 @@ impl<W: AsyncWriteExt + Unpin> OutgoingInnerPacket<W> {
                     tgt,
                 })
             }
-        //} else {
-        //  if let Some(len) = len {
-        //    if len > 2097151 {
-        //      Err(Error::PacketTooBig(len))
-        // } else {
-        //   VarInt(len as i32).encode(&mut tgt, version).await?;
-        //  Ok(OutgoingInnerPacket::Normal(Limit::new(tgt, len)))
-        // }
         } else if let Some(len) = len {
             if len > 2097151 {
                 Err(Error::PacketTooBig(len))
@@ -413,11 +405,16 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]).ready()??;
+                    Pin::new(&mut *tgt)
+                        .poll_write(cx, &encode_buf.into_inner()[..end_pos])
+                        .ready()??;
                     *shutting_down = true;
                 }
                 while *len != 0 {
-                    match Pin::new(&mut *tgt).poll_write(cx, &vec[vec.len() - *len..]).ready()? {
+                    match Pin::new(&mut *tgt)
+                        .poll_write(cx, &vec[vec.len() - *len..])
+                        .ready()?
+                    {
                         Ok(bytes_written) => *len -= bytes_written,
                         Err(err) => return Poll::Ready(Err(err)),
                     }
@@ -477,13 +474,16 @@ impl<W: AsyncWriteExt + Unpin> AsyncWrite for OutgoingInnerPacket<W> {
                         }
                     }
                     let end_pos = encode_buf.position() as usize;
-                    Pin::new(&mut *tgt).poll_write(cx, &encode_buf.into_inner()[..end_pos]).ready()??;
+                    Pin::new(&mut *tgt)
+                        .poll_write(cx, &encode_buf.into_inner()[..end_pos])
+                        .ready()??;
                     *len = compressed.len();
                     *shutting_down = true;
                 }
                 while *len != 0 {
-                    *len -=
-                        Pin::new(&mut *tgt).poll_write(cx, &compressed[compressed.len() - *len..]).ready()??;
+                    *len -= Pin::new(&mut *tgt)
+                        .poll_write(cx, &compressed[compressed.len() - *len..])
+                        .ready()??;
                 }
                 Poll::Ready(Ok(()))
             }
